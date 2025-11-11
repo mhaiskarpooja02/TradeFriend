@@ -1,0 +1,26 @@
+{
+    "ema_short": 9,
+    "ema_long": 21,
+    "candles_above": 2,
+    "lookback_days": 90,
+    "default_interval": "ONE_DAY",
+    "rsi_period": 14,
+    "rsi_overbought": 70,
+    "rsi_oversold": 30,
+    "atr_period": 14,
+    "atr_mult": 1.5,
+    "vol_period": 20,
+    "full_confirm_vol_mult": 1.5,
+    "email_settings": {
+        "sender_email": "",
+        "sender_password": "",
+        "subject_template": "Swing Trade Report \u2014 {date} by Autotrade",
+        "body_template": "\ud83d\udcc5 Swing Trade Report \u2014 {date}\n\ud83d\udcc8 {signal_count} Buy Signal(s): {symbols}\n\nPlease find attached today's signal report.",
+        "receiver_emails": [
+            "omya.4u@gmail.com",
+            "Prasannaxtr@gmail.com",
+            "Anupjoshi06@gmail.com",
+            "sachinbhorkar@gmail.com"
+        ]
+    }
+}

@@ -1,0 +1,177 @@
+# core/trade_finder_runner.py
+import os
+import datetime
+import json
+from typing import Tuple, List
+
+from db_helpers.missing_token_db import MissingTokenDB
+from utils.logger import get_logger, sanitize_for_log
+from broker.angel_client import AngelClient
+from utils.indicators import check_ema_crossover, format_signals_daily
+from utils.file_handler import save_text, load_symbols_from_csv
+# send_email code left commented (same as before)
+from utils.sendemail import send_email_with_attachment
+from config.settings import (
+    OUTPUT_FOLDER,
+    EMAIL_SUBJECT_TEMPLATE, EMAIL_BODY_TEMPLATE,
+    SENDER_EMAIL, SENDER_PASSWORD, RECEIVER_EMAILS
+)
+from utils.symbol_resolver import SymbolResolver
+
+logger = get_logger(__name__)
+
+def _derive_trade_date_from_input_folder(input_folder: str) -> str:
+    """
+    If input_folder ends with YYYYMMDD, convert to YYYY-MM-DD for friendly reporting.
+    Otherwise use today's date.
+    """
+    base = os.path.basename(os.path.normpath(input_folder))
+    try:
+        if base.isdigit() and len(base) == 8:
+            dt = datetime.datetime.strptime(base, "%Y%m%d")
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return datetime.datetime.now().strftime("%Y-%m-%d")
+
+
+def run_trade_finder(input_folder: str, output_base_folder: str) -> Tuple[bool, List[str]]:
+    """
+    Run Trade Finder for ALL CSV files inside `input_folder`.
+    Returns: (success: bool, list_of_output_file_paths)
+    - success == False means a fatal error (e.g. folder missing, broker login failed)
+    - success == True but returned list may be empty (no signals/rejections generated)
+    """
+
+    # --- Step 0: validate input folder ---
+    if not os.path.exists(input_folder) or not os.path.isdir(input_folder):
+        logger.error(f"Input folder not found or not a directory: {input_folder}")
+        return False, []
+
+    # --- Step 1. Load symbols from selected folder (function expects folder) ---
+    try:
+        names = load_symbols_from_csv(input_folder)
+        if not names:
+            logger.warning(f"No symbols found in {input_folder}")
+            # success==True (ran OK), but no symbols to process
+            return True, []
+        logger.info(f"Found {len(names)} symbols in {input_folder}")
+    except Exception as e:
+        logger.error(f"Error loading symbols from {input_folder}: {e}")
+        return False, []
+
+    # --- Step 2. Broker login and symbol resolver ---
+    broker = AngelClient()
+    if getattr(broker, "smart_api", None) is None:
+        logger.error("Broker login failed. Exiting Trade Finder.")
+        return False, []
+
+    resolver = SymbolResolver()
+
+    signals = []
+    rejections = []
+
+    # --- Step 3. Process symbols ---
+    for name in names:
+        try:
+            logger.info(f"Processing symbol: {name}")
+            mapping = resolver.resolve_symbol_tradefinder(name)
+
+            if not mapping:
+                rejections.append(f"{name} → No mapping found")
+                continue
+
+            trading_symbol = mapping.get("trading_symbol")
+            token = mapping.get("token")
+
+            if not token:
+                rejections.append(f"{trading_symbol} → No token")
+                continue
+
+            df = broker.get_historical_data(trading_symbol, token)
+            if df is None or df.empty:
+                rejections.append(f"{trading_symbol} → No historical data")
+                continue
+
+            required_cols = {"close", "high", "low", "open", "volume"}
+            missing = required_cols - set(df.columns)
+            if missing:
+                rejections.append(f"{trading_symbol} → Missing columns {missing}")
+                continue
+
+            signal = check_ema_crossover(df, trading_symbol)
+            if signal.get("reason"):
+                rejections.append(f"{signal.get('symbol', trading_symbol)} → {signal['reason']}")
+            else:
+                signals.append(signal)
+                logger.info(sanitize_for_log(f" Signal: {trading_symbol} BUY at {signal.get('entry')}"))
+
+        except Exception as e:
+            logger.exception(f"Error while processing {name}: {e}")
+            rejections.append(f"{name} → Error {e}")
+
+    # --- Step 4. Prepare output folder for this trade date ---
+    trade_date = _derive_trade_date_from_input_folder(input_folder)  # e.g., "2025-09-21"
+    dated_output = os.path.join(output_base_folder, trade_date)
+    try:
+        os.makedirs(dated_output, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Failed to create output folder {dated_output}: {e}")
+        return False, []
+
+    output_file = None
+    rejection_file = None
+
+    # --- Save signals (if any) ---
+    if signals:
+        try:
+            output_file = os.path.join(dated_output, "signals.txt")
+            report = format_signals_daily(signals, trade_date)
+            save_text(output_file, report)
+            logger.info(f" Signals saved to {output_file}")
+
+            subject = EMAIL_SUBJECT_TEMPLATE.format(date=trade_date)
+            body = EMAIL_BODY_TEMPLATE.format(
+                date=trade_date,
+                signal_count=len(signals),
+                symbols=", ".join(sig.get("symbol", "") for sig in signals)
+            )
+            send_email_with_attachment(
+                sender_email=SENDER_EMAIL,
+                sender_password=SENDER_PASSWORD,
+                receiver_emails=RECEIVER_EMAILS,
+                subject=subject,
+                body=body,
+                file_path=output_file
+            )
+            logger.info(f" Email (disabled) prepared for {RECEIVER_EMAILS}")
+        except Exception as e:
+            logger.exception(f"Failed to save signals: {e}")
+
+    # --- Save rejections (if any) ---
+    if rejections:
+        try:
+            rejection_file = os.path.join(dated_output, "rejections.txt")
+            formatted_rejections = [f"• {r}" for r in rejections if r and r.strip()]
+            header = f" Rejection Report — {trade_date}\n {len(formatted_rejections)} entries\n\n"
+            save_text(rejection_file, header + "\n".join(formatted_rejections))
+            logger.info(f" Rejections saved to {rejection_file}")
+
+            # --- NEW: capture missing token cases ---
+            db = MissingTokenDB()
+            for rej in rejections:
+                if "No token" in rej:
+                    # e.g. "RELIANCE-EQ → No token"
+                    try:
+                        symbol = rej.split("→")[0].strip()
+                        db.add_or_update(symbol, name=symbol, active=0)
+                    except Exception as e:
+                        logger.error(f"Failed storing missing token from rejection: {rej} ({e})")
+                            
+        except Exception as e:
+            logger.exception(f"Failed to save rejections: {e}")
+
+        logger.info(" Trade Finder Finished")
+
+    result_files = [p for p in (output_file, rejection_file) if p]
+    return True, result_files

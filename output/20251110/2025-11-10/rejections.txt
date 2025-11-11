@@ -1,0 +1,257 @@
+Rejection Report — 2025-11-10
+Total: 254 entries
+
+• SAREGAMA-EQ → EMA & BB conditions not met
+• MAHSEAMLES-EQ → EMA & BB conditions not met
+• DALBHARAT-EQ → EMA & BB conditions not met
+• JINDALPHOT-EQ → EMA & BB conditions not met
+• MANAPPURAM-EQ → EMA & BB conditions not met
+• RESPONIND-EQ → EMA & BB conditions not met
+• SIS-EQ → EMA & BB conditions not met
+• NELCO-EQ → EMA & BB conditions not met
+• JUBLFOOD-EQ → EMA & BB conditions not met
+• SENCO-EQ → EMA & BB conditions not met
+• AEGISVOPAK-EQ → EMA & BB conditions not met
+• TECHM-EQ → EMA & BB conditions not met
+• EUREKAFORB-EQ → EMA & BB conditions not met
+• SYNGENE-EQ → EMA & BB conditions not met
+• CROMPTON-EQ → EMA & BB conditions not met
+• BLS-EQ → EMA & BB conditions not met
+• TRITURBINE-EQ → EMA & BB conditions not met
+• ITC-EQ → EMA & BB conditions not met
+• ASTRAMICRO-EQ → EMA & BB conditions not met
+• SGFIN-EQ → EMA & BB conditions not met
+• CMSINFO-EQ → EMA & BB conditions not met
+• ROSSARI-EQ → EMA & BB conditions not met
+• TIMETECHNO-EQ → EMA & BB conditions not met
+• CGPOWER-EQ → EMA & BB conditions not met
+• VIDHIING-EQ → EMA & BB conditions not met
+• MONARCH-EQ → EMA & BB conditions not met
+• ARUNIS-EQ → No token
+• HAVELLS-EQ → EMA & BB conditions not met
+• RHL-EQ → EMA & BB conditions not met
+• MANOMAY-EQ → EMA & BB conditions not met
+• GNFC-EQ → EMA & BB conditions not met
+• SVLL-EQ → EMA & BB conditions not met
+• HVAX-EQ → No token
+• RAJPUTANA$-EQ → No token
+• AADHARHFC-EQ → EMA & BB conditions not met
+• MODINSU-EQ → No token
+• LLOYDSME-EQ → EMA & BB conditions not met
+• NITINSPIN-EQ → EMA & BB conditions not met
+• ZYDUSLIFE-EQ → EMA & BB conditions not met
+• TECHERA-EQ → No token
+• HBLENGINE-EQ → EMA & BB conditions not met
+• SUNDRMFAST-EQ → EMA & BB conditions not met
+• PNGJL-EQ → EMA & BB conditions not met
+• IIFL-EQ → EMA & BB conditions not met
+• GABRIEL-EQ → EMA & BB conditions not met
+• DCMSHRIRAM-EQ → EMA & BB conditions not met
+• DLINKINDIA-EQ → EMA & BB conditions not met
+• YATHARTH-EQ → EMA & BB conditions not met
+• GLAND-EQ → EMA & BB conditions not met
+• FABCLEAN-EQ → No token
+• PPL-EQ → EMA & BB conditions not met
+• RKFORGE-EQ → EMA & BB conditions not met
+• FEDERALBNK-EQ → EMA & BB conditions not met
+• CAMPUS-EQ → EMA & BB conditions not met
+• VOLERCAR-EQ → No historical data
+• NAM-INDIA-EQ → EMA & BB conditions not met
+• COALINDIA-EQ → EMA & BB conditions not met
+• DBCORP-EQ → EMA & BB conditions not met
+• ZYDUSWELL-EQ → EMA & BB conditions not met
+• TITAGARH-EQ → EMA & BB conditions not met
+• FAZE3Q-EQ → EMA & BB conditions not met
+• GODAVARIB-EQ → EMA & BB conditions not met
+• GRINFRA-EQ → EMA & BB conditions not met
+• AURIONPRO-EQ → EMA & BB conditions not met
+• ARVIND-EQ → EMA & BB conditions not met
+• HDFCBANK-EQ → EMA & BB conditions not met
+• ELIN-EQ → EMA & BB conditions not met
+• DALMIASUG-EQ → EMA & BB conditions not met
+• ZUARI-EQ → EMA & BB conditions not met
+• HEUBACHIND-EQ → EMA & BB conditions not met
+• WIPRO-EQ → EMA & BB conditions not met
+• GALLANTT-EQ → EMA & BB conditions not met
+• CLEAN-EQ → EMA & BB conditions not met
+• SHOPERSTOP-EQ → EMA & BB conditions not met
+• GLENMARK-EQ → EMA & BB conditions not met
+• SRHHYPOLTD-EQ → EMA & BB conditions not met
+• ENTERO-EQ → EMA & BB conditions not met
+• ITI-EQ → EMA & BB conditions not met
+• APRAMEYA-EQ → No token
+• HINDCOPPER-EQ → EMA & BB conditions not met
+• AVL-EQ → EMA & BB conditions not met
+• DSSL-EQ → EMA & BB conditions not met
+• BAJAJINDEF-EQ → EMA & BB conditions not met
+• ASHAPURMIN-EQ → EMA & BB conditions not met
+• SURAKSHA-EQ → EMA & BB conditions not met
+• HGS-EQ → EMA & BB conditions not met
+• ZENSARTECH-EQ → EMA & BB conditions not met
+• SONATSOFTW-EQ → EMA & BB conditions not met
+• AKIKO-EQ → No token
+• CONCORDBIO-EQ → EMA & BB conditions not met
+• SSWL-EQ → EMA & BB conditions not met
+• EXIDEIND-EQ → EMA & BB conditions not met
+• COCHINSHIP-EQ → EMA & BB conditions not met
+• SYSTANGO-EQ → No historical data
+• BHAGCHEM-EQ → EMA & BB conditions not met
+• BAJAJELEC-EQ → EMA & BB conditions not met
+• MOTILALOFS-EQ → EMA & BB conditions not met
+• KRISHNADEF-EQ → No token
+• ASAL-EQ → EMA & BB conditions not met
+• CSLFINANCE-EQ → EMA & BB conditions not met
+• EFCIL-EQ → EMA & BB conditions not met
+• HINDZINC-EQ → EMA & BB conditions not met
+• DELPHIFX-EQ → EMA & BB conditions not met
+• SWSOLAR-EQ → EMA & BB conditions not met
+• OWAIS-EQ → No token
+• GUJGASLTD-EQ → EMA & BB conditions not met
+• MACPOWER-EQ → EMA & BB conditions not met
+• SAILIFE-EQ → EMA & BB conditions not met
+• DODLA-EQ → EMA & BB conditions not met
+• KALPATARU-EQ → EMA & BB conditions not met
+• BALRAMCHIN-EQ → EMA & BB conditions not met
+• GANDHITUBE-EQ → EMA & BB conditions not met
+• AKSHARCHEM-EQ → EMA & BB conditions not met
+• CHOLAFIN-EQ → EMA & BB conditions not met
+• PRECWIRE-EQ → EMA & BB conditions not met
+• LOYALTEX-EQ → EMA & BB conditions not met
+• SMSPHARMA-EQ → EMA & BB conditions not met
+• HUHTAMAKI-EQ → EMA & BB conditions not met
+• ASHOKA-EQ → EMA & BB conditions not met
+• BHARTIHEXA-EQ → EMA & BB conditions not met
+• LEHAR-EQ → No token
+• UNIMECH-EQ → EMA & BB conditions not met
+• INDHOTEL-EQ → EMA & BB conditions not met
+• SOMANYCERA-EQ → EMA & BB conditions not met
+• JUNIPER-EQ → EMA & BB conditions not met
+• SEQUENT-EQ → EMA & BB conditions not met
+• HOACFOODS-EQ → No token
+• GODREJCP-EQ → EMA & BB conditions not met
+• INFOLLION-EQ → No token
+• SANDUMA-EQ → EMA & BB conditions not met
+• RSYSTEMS-EQ → EMA & BB conditions not met
+• MANORG-EQ → EMA & BB conditions not met
+• JSWSTEEL-EQ → EMA & BB conditions not met
+• BERGEPAINT-EQ → EMA & BB conditions not met
+• INDNIPPON-EQ → EMA & BB conditions not met
+• MIDHANI-EQ → EMA & BB conditions not met
+• PIDILITIND-EQ → EMA & BB conditions not met
+• CENTURYPLY-EQ → EMA & BB conditions not met
+• BLAL-EQ → EMA & BB conditions not met
+• SURYAROSNI-EQ → EMA & BB conditions not met
+• AXISCADES-EQ → EMA & BB conditions not met
+• KANPRPLA-EQ → EMA & BB conditions not met
+• ICICIBANK-EQ → EMA & BB conditions not met
+• TORNTPOWER-EQ → EMA & BB conditions not met
+• JUBLINGREA-EQ → EMA & BB conditions not met
+• GREENPLY-EQ → EMA & BB conditions not met
+• SWELECTES-EQ → EMA & BB conditions not met
+• VOLTAS-EQ → EMA & BB conditions not met
+• MARICO-EQ → EMA & BB conditions not met
+• MAITHANALL-EQ → EMA & BB conditions not met
+• POLYPLEX-EQ → EMA & BB conditions not met
+• TATAPOWER-EQ → EMA & BB conditions not met
+• VENUSPIPES-EQ → EMA & BB conditions not met
+• PUNJABCHEM-EQ → EMA & BB conditions not met
+• GLOSTERLTD-EQ → EMA & BB conditions not met
+• DYCL-EQ → EMA & BB conditions not met
+• URAVIDEF-EQ → EMA & BB conditions not met
+• SARDAEN-EQ → EMA & BB conditions not met
+• KCP-EQ → EMA & BB conditions not met
+• PGEL-EQ → EMA & BB conditions not met
+• KERNEX-EQ → EMA & BB conditions not met
+• PRABHA-EQ → EMA & BB conditions not met
+• BFINVEST-EQ → EMA & BB conditions not met
+• MAITREYA-EQ → No token
+• VINYAS-EQ → No token
+• BBOX-EQ → EMA & BB conditions not met
+• POLICYBZR-EQ → EMA & BB conditions not met
+• INDIQUBE-EQ → EMA & BB conditions not met
+• APOLSINHOT-EQ → EMA & BB conditions not met
+• LGHL-EQ → EMA & BB conditions not met
+• MPHASIS-EQ → EMA & BB conditions not met
+• AEGISLOG-EQ → EMA & BB conditions not met
+• ZENTEC-EQ → EMA & BB conditions not met
+• INDOFARM-EQ → EMA & BB conditions not met
+• REFEX-EQ → EMA & BB conditions not met
+• JIOFIN-EQ → EMA & BB conditions not met
+• AETHER-EQ → EMA & BB conditions not met
+• CREDITACC-EQ → EMA & BB conditions not met
+• MOGOLD-EQ → EMA & BB conditions not met
+• BIOCON-EQ → EMA & BB conditions not met
+• SPLPETRO-EQ → EMA & BB conditions not met
+• LAOPALA-EQ → EMA & BB conditions not met
+• HYUNDAI-EQ → EMA & BB conditions not met
+• ANTHEM-EQ → EMA & BB conditions not met
+• SUBAM-EQ → No token
+• HCLTECH-EQ → EMA & BB conditions not met
+• CYIENT-EQ → EMA & BB conditions not met
+• ALLDIGI-EQ → EMA & BB conditions not met
+• SIGNPOST-EQ → EMA & BB conditions not met
+• SILINV-EQ → EMA & BB conditions not met
+• KAUSHALYA-EQ → EMA & BB conditions not met
+• UTTAMSUGAR-EQ → EMA & BB conditions not met
+• HDBFS-EQ → EMA & BB conditions not met
+• SHANTIGEAR-EQ → EMA & BB conditions not met
+• PCBL-EQ → EMA & BB conditions not met
+• CHEVIOT-EQ → EMA & BB conditions not met
+• DIAMINESQ-EQ → EMA & BB conditions not met
+• NAUKRI-EQ → EMA & BB conditions not met
+• SWARAJ-EQ → No token
+• WOCKPHARMA-EQ → EMA & BB conditions not met
+• UNICHEMLAB-EQ → EMA & BB conditions not met
+• VIMTALABS-EQ → EMA & BB conditions not met
+• ANANTRAJ-EQ → EMA & BB conditions not met
+• JASH-EQ → EMA & BB conditions not met
+• SBICARD-EQ → EMA & BB conditions not met
+• KKCL-EQ → EMA & BB conditions not met
+• INDOCO-EQ → EMA & BB conditions not met
+• EMAMILTD-EQ → EMA & BB conditions not met
+• SALONA-EQ → EMA & BB conditions not met
+• HOMEFIRST-EQ → EMA & BB conditions not met
+• JSWENERGY-EQ → EMA & BB conditions not met
+• ACCELYA-EQ → EMA & BB conditions not met
+• NIBE-EQ → EMA & BB conditions not met
+• 360ONE-EQ → EMA & BB conditions not met
+• KKVAPOW-EQ → No token
+• MOIL-EQ → EMA & BB conditions not met
+• BLUESTARCO-EQ → EMA & BB conditions not met
+• PATELRMART-EQ → EMA & BB conditions not met
+• GENESYS-EQ → EMA & BB conditions not met
+• SAHASRA-EQ → No token
+• INOXINDIA-EQ → EMA & BB conditions not met
+• ONEGLOBAL-EQ → No token
+• SPAL-EQ → EMA & BB conditions not met
+• CEIGALL-EQ → EMA & BB conditions not met
+• ASKAUTOLTD-EQ → EMA & BB conditions not met
+• AVALON-EQ → EMA & BB conditions not met
+• USHAMART-EQ → EMA & BB conditions not met
+• GSPL-EQ → EMA & BB conditions not met
+• HERITGFOOD-EQ → EMA & BB conditions not met
+• HUDCO-EQ → EMA & BB conditions not met
+• FSL-EQ → EMA & BB conditions not met
+• NLCINDIA-EQ → EMA & BB conditions not met
+• BSL-EQ → EMA & BB conditions not met
+• FINCABLES-EQ → EMA & BB conditions not met
+• TRIVENI-EQ → EMA & BB conditions not met
+• BORORENEW-EQ → EMA & BB conditions not met
+• VMARCIND-EQ → No token
+• BAJAJFINSV-EQ → EMA & BB conditions not met
+• POCL-EQ → EMA & BB conditions not met
+• SABTNL-EQ → EMA & BB conditions not met
+• BDL-EQ → EMA & BB conditions not met
+• WEALTH-EQ → EMA & BB conditions not met
+• TATATECH-EQ → EMA & BB conditions not met
+• BOROLTD-EQ → EMA & BB conditions not met
+• KRSNAA-EQ → EMA & BB conditions not met
+• STERTOOLS-EQ → EMA & BB conditions not met
+• SULA-EQ → EMA & BB conditions not met
+• HPL-EQ → EMA & BB conditions not met
+• JINDRILL-EQ → EMA & BB conditions not met
+• AARTIDRUGS-EQ → EMA & BB conditions not met
+• SIRCA-EQ → EMA & BB conditions not met
+• HAPPSTMNDS-EQ → EMA & BB conditions not met
+• EIHAHOTELS-EQ → EMA & BB conditions not met
+• DCXINDIA-EQ → EMA & BB conditions not met

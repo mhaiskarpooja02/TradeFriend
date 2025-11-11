@@ -1,0 +1,5 @@
+dhanhq
+pandas
+requests
+python-dotenv 
+flet[all]

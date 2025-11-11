@@ -1,0 +1,315 @@
+import talib
+import pandas as pd
+import numpy as np
+import logging
+from datetime import datetime
+
+from config.settings import (
+    EMA_SHORT, EMA_LONG,
+    CANDLES_ABOVE, RSI_PERIOD, RSI_OVERBOUGHT,
+    VOL_PERIOD, FULL_CONFIRM_VOL_MULT
+)
+
+# ---------------------------------------------------------------------
+# Logging Setup
+# ---------------------------------------------------------------------
+logger = logging.getLogger("IndicatorEngine")
+logger.setLevel(logging.DEBUG)
+
+fh = logging.FileHandler("logs/indicator_engine.log")
+fh.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+fh.setFormatter(formatter)
+logger.addHandler(fh)
+
+
+# ---------------------------------------------------------------------
+# Safe Number Utility
+# ---------------------------------------------------------------------
+def safe_number(val):
+    """Return float if val is numeric, else 'N/A'."""
+    try:
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return "N/A"
+        return float(val)
+    except Exception:
+        return "N/A"
+
+
+# ---------------------------------------------------------------------
+# Indicator Engine Class
+# ---------------------------------------------------------------------
+class IndicatorEngine:
+    def __init__(self, df: pd.DataFrame, symbol: str):
+        self.df = df.copy()
+        self.symbol = symbol
+
+        # Coerce numeric columns
+        for col in ["close", "open", "high", "low", "volume"]:
+            if col in self.df.columns:
+                self.df[col] = pd.to_numeric(self.df[col], errors="coerce")
+
+        # Precompute base indicators
+        close = self.df["close"].values
+        self.df["ema_short"] = talib.EMA(close, timeperiod=EMA_SHORT)
+        self.df["ema_long"] = talib.EMA(close, timeperiod=EMA_LONG)
+        self.df["rsi"] = talib.RSI(close, timeperiod=RSI_PERIOD)
+
+        # Signed volume
+        self.df["signed_vol"] = self.df.apply(
+            lambda row: row["volume"] if row["close"] > row["open"] else -row["volume"], axis=1
+        )
+        self.df["signed_vol_avg"] = self.df["signed_vol"].rolling(window=VOL_PERIOD).mean()
+        self.df["vol_avg"] = self.df["signed_vol_avg"]
+
+        logger.info(f"Initialized IndicatorEngine for {symbol}, rows={len(self.df)}")
+
+    # ------------------------------------------------------------
+    # EMA + RSI + Volume + Pivot Signal
+    # ------------------------------------------------------------
+    def check_ema_crossover(self,
+                            CROSS_LOOKBACK=5,
+                            PIVOT_LOOKBACK=20):
+        """
+        Detect bullish crossover setups with RSI, pivots, and adaptive targets.
+        """
+        if self.df is None or self.df.empty or "close" not in self.df.columns:
+            return {"symbol": self.symbol, "reason": "No data or missing close column"}
+
+        min_rows = max(EMA_LONG, VOL_PERIOD, CANDLES_ABOVE, PIVOT_LOOKBACK) + 5
+        if len(self.df) < min_rows:
+            return {"symbol": self.symbol, "reason": f"Insufficient data (< {min_rows} rows)"}
+
+        last = self.df.iloc[-1]
+        prev = self.df.iloc[-2]
+        recent = self.df.tail(CANDLES_ABOVE)
+
+        # --- Recent crossover logic ---
+        cross_idx = None
+        for i in range(1, CROSS_LOOKBACK + 1):
+            if (self.df["ema_short"].iloc[-i] > self.df["ema_long"].iloc[-i]) and \
+               (self.df["ema_short"].iloc[-i-1] <= self.df["ema_long"].iloc[-i-1]):
+                cross_idx = i
+                break
+        recent_cross = cross_idx is not None
+
+        # Count how many recent closes are above EMA_LONG
+        count_above = (recent["close"] > recent["ema_long"]).sum()
+        closes_above_long = count_above >= len(recent) / 2
+
+        rsi_curr = last["rsi"]
+        rsi_ok = not pd.isna(rsi_curr) and rsi_curr < 85
+
+        # --- Pivot Calculation ---
+        pivot_classic = pivot_fib = None
+        r1_classic = s1_classic = r2_classic = s2_classic = r3_classic = s3_classic = None
+        r1_fib = s1_fib = r2_fib = s2_fib = r3_fib = s3_fib = None
+
+        if {"high", "low", "close"}.issubset(self.df.columns):
+            prev_high = float(prev["high"])
+            prev_low = float(prev["low"])
+            prev_close = float(prev["close"])
+
+            pivot_classic = (prev_high + prev_low + prev_close) / 3
+            r1_classic = 2 * pivot_classic - prev_low
+            s1_classic = 2 * pivot_classic - prev_high
+            r2_classic = pivot_classic + (prev_high - prev_low)
+            s2_classic = pivot_classic - (prev_high - prev_low)
+            r3_classic = prev_high + 2 * (pivot_classic - prev_low)
+            s3_classic = prev_low - 2 * (prev_high - pivot_classic)
+
+            # Fibonacci Pivot
+            pivot_fib = pivot_classic
+            rng = prev_high - prev_low
+            r1_fib = pivot_fib + (rng * 0.382)
+            r2_fib = pivot_fib + (rng * 0.618)
+            r3_fib = pivot_fib + (rng * 1.000)
+            s1_fib = pivot_fib - (rng * 0.382)
+            s2_fib = pivot_fib - (rng * 0.618)
+            s3_fib = pivot_fib - (rng * 1.000)
+
+        # --- Signal conditions ---
+        if recent_cross and closes_above_long and rsi_ok:
+            entry_price = float(last["close"])
+            stoploss = float(last["ema_long"])
+            exit_plan = "Exit if EMA9 < EMA21 or Close < EMA21"
+
+            # If last candle is bearish
+            if last["signed_vol"] <= 0:
+                return {
+                    "symbol": self.symbol,
+                    "date": str(last.name),
+                    "close": safe_number(entry_price),
+                    "ema_short": safe_number(last["ema_short"]),
+                    "ema_long": safe_number(last["ema_long"]),
+                    "rsi": float(last["rsi"]) if not pd.isna(last["rsi"]) else None,
+                    "signal": "Bullish Crossover",
+                    "confirmed": "WAIT",
+                    "entry": None,
+                    "sl": None,
+                    "note": "Last candle shows selling pressure → Wait for retrace before entry"
+                }
+
+            # Volume confirmation
+            vol_ok = last["signed_vol"] > last["signed_vol_avg"] if not pd.isna(last["signed_vol_avg"]) else False
+            strong_vol = vol_ok and (last["signed_vol"] >= last["signed_vol_avg"] * 1.5)
+
+            if strong_vol:
+                position_sizing = "FULL"
+                qty_message = "🚀 Strong bullish demand → FULL Qty"
+            elif vol_ok:
+                position_sizing = "MEDIUM"
+                qty_message = "✅ Decent bullish demand → MEDIUM Qty"
+            else:
+                position_sizing = "SMALL"
+                qty_message = "⚠️ Weak bullish demand → SMALL Qty"
+
+            # Targets
+            try:
+                targets, note = self.calculate_targets(last, entry_price)
+                target1, target2, target3 = targets[:3]
+            except Exception as e:
+                logger.error(f"Target calculation error for {self.symbol}: {e}")
+                return {"symbol": self.symbol, "reason": f"Target calculation error: {e}"}
+
+            return {
+                "symbol": self.symbol,
+                "date": str(last.name),
+                "close": safe_number(entry_price),
+                "ema_short": safe_number(round(last["ema_short"], 2)),
+                "ema_long": safe_number(round(last["ema_long"], 2)),
+                "rsi": safe_number(last["rsi"]),
+                "signal": "Bullish Crossover",
+                "confirmed": "BUY",
+                "entry": safe_number(entry_price),
+                "sl": safe_number(stoploss),
+                "target1": safe_number(round(target1, 2)),
+                "target2": safe_number(round(target2, 2)),
+                "target3": safe_number(round(target3, 2)),
+                "pivot_classic": safe_number(round(pivot_classic, 2) if pivot_classic else None),
+                "r1_classic": safe_number(round(r1_classic, 2) if r1_classic else None),
+                "r2_classic": safe_number(round(r2_classic, 2) if r2_classic else None),
+                "r3_classic": safe_number(round(r3_classic, 2) if r3_classic else None),
+                "s1_classic": safe_number(round(s1_classic, 2) if s1_classic else None),
+                "s2_classic": safe_number(round(s2_classic, 2) if s2_classic else None),
+                "s3_classic": safe_number(round(s3_classic, 2) if s3_classic else None),
+                "pivot_fib": safe_number(round(pivot_fib, 2) if pivot_fib else None),
+                "r1_fib": safe_number(round(r1_fib, 2) if r1_fib else None),
+                "r2_fib": safe_number(round(r2_fib, 2) if r2_fib else None),
+                "r3_fib": safe_number(round(r3_fib, 2) if r3_fib else None),
+                "s1_fib": safe_number(round(s1_fib, 2) if s1_fib else None),
+                "s2_fib": safe_number(round(s2_fib, 2) if s2_fib else None),
+                "s3_fib": safe_number(round(s3_fib, 2) if s3_fib else None),
+                "crossed_days_ago": cross_idx,
+                "exit_plan": exit_plan,
+                "position_sizing": position_sizing,
+                "qty_message": qty_message,
+                "note": note,
+            }
+
+        reason = self.build_rejection_reason(last, prev, recent, CROSS_LOOKBACK)
+        return {"symbol": self.symbol, "reason": reason or "Conditions not met"}
+
+    # ------------------------------------------------------------
+    # Bollinger Band Momentum Strategy (NEW)
+    # ------------------------------------------------------------
+    def bollinger_momentum(self, period=20, dev=2):
+        """
+        Simple Bollinger Band Momentum Strategy.
+        Buy if close > upper band + volume > avg.
+        Sell if close < lower band + volume > avg.
+        """
+        close = self.df["close"].values
+        upper, middle, lower = talib.BBANDS(close, timeperiod=period, nbdevup=dev, nbdevdn=dev)
+
+        self.df["bb_upper"] = upper
+        self.df["bb_middle"] = middle
+        self.df["bb_lower"] = lower
+
+        last = self.df.iloc[-1]
+        avg_vol = self.df["volume"].mean()
+
+        if last["close"] > last["bb_upper"] and last["volume"] > avg_vol:
+            return {"symbol": self.symbol, "signal": "Bollinger Breakout Buy", "close": last["close"]}
+        elif last["close"] < last["bb_lower"] and last["volume"] > avg_vol:
+            return {"symbol": self.symbol, "signal": "Bollinger Breakdown Sell", "close": last["close"]}
+        else:
+            return {"symbol": self.symbol, "signal": "No Bollinger Signal"}
+
+    # ------------------------------------------------------------
+    # Target Calculation
+    # ------------------------------------------------------------
+    def calculate_targets(self, last, entry_price, swing_short=30, swing_long=90):
+        valid_targets = []
+        note = ""
+
+        # Target 1 → Previous candle high
+        prev_high = None
+        if "high" in self.df.columns and len(self.df) > 1:
+            prev_high = float(self.df.iloc[-2]["high"])
+            if prev_high > entry_price:
+                valid_targets.append(prev_high)
+
+        # Filter bullish + strong volume candles
+        avg_vol = self.df["volume"].mean()
+        bullish_df = self.df[(self.df["close"] > self.df["open"]) & (self.df["volume"] > avg_vol)]
+
+        # Target 2
+        if not bullish_df.empty:
+            t2 = bullish_df.tail(swing_short)["high"].max()
+            if t2 > entry_price:
+                valid_targets.append(t2)
+
+        # Target 3
+        if not bullish_df.empty:
+            t3 = bullish_df.tail(swing_long)["high"].max()
+            if t3 > entry_price:
+                valid_targets.append(t3)
+
+        if not valid_targets:
+            valid_targets = [entry_price * 1.02, entry_price * 1.04, entry_price * 1.06]
+        else:
+            if prev_high and prev_high <= entry_price:
+                if len(valid_targets) > 0:
+                    note = "⚠️ Possible retrace: Target 1 adjusted (prev high < entry)"
+                valid_targets = sorted(set(valid_targets))
+
+        targets = sorted(set(round(t, 2) for t in valid_targets))
+
+        while len(targets) < 3:
+            targets.append(round(targets[-1] * 1.03, 2))
+
+        return targets[:3], note
+
+    # ------------------------------------------------------------
+    # Rejection Reason
+    # ------------------------------------------------------------
+    def build_rejection_reason(self, last, prev, recent, CROSS_LOOKBACK=5):
+        reasons = []
+
+        cross_found = False
+        for i in range(1, CROSS_LOOKBACK + 1):
+            if (self.df["ema_short"].iloc[-i] > self.df["ema_long"].iloc[-i]) and \
+               (self.df["ema_short"].iloc[-i-1] <= self.df["ema_long"].iloc[-i-1]):
+                cross_found = True
+                break
+        if not cross_found:
+            reasons.append(f"No recent EMA crossover (last {CROSS_LOOKBACK} candles)")
+
+        if not all(recent["close"] > recent["ema_long"]):
+            reasons.append(f"Not all last {len(recent)} closes above EMA_LONG")
+
+        rsi_curr = last["rsi"]
+        rsi_prev = prev["rsi"] if not pd.isna(prev["rsi"]) else None
+        if pd.isna(rsi_curr):
+            reasons.append("RSI not available")
+        else:
+            if rsi_curr >= 85:
+                reasons.append(f"RSI too high ({rsi_curr:.2f})")
+            elif rsi_prev is not None and rsi_curr < rsi_prev:
+                reasons.append(f"RSI losing momentum (falling from {rsi_prev:.2f} to {rsi_curr:.2f})")
+
+        if last["volume"] <= last["vol_avg"]:
+            reasons.append("Volume not supportive")
+
+        return f"{self.symbol} → " + "; ".join(reasons) if reasons else None

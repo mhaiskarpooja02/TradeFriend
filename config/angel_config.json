@@ -1,0 +1,13 @@
+{
+  "OrderRequest": {
+    "exchangeSegment": "NSE",
+    "productType": "CNC",
+    "orderType": "LIMIT",
+    "validity": "DAY",
+    "transactionType": "BUY",
+    "symbolToken": "",
+    "quantity": "",
+    "price": "",
+    "triggerPrice": ""
+  }
+}

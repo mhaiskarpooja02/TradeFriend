@@ -1,0 +1,13 @@
+{
+  "OrderRequest": {
+    "exchangeSegment": "BSE_EQ",
+    "productType": "DELIVERY",
+    "orderType": "MARKET",
+    "validity": "DAY",
+    "transactionType": "SELL",
+    "securityCode": "",
+    "quantity": "",
+    "price": "0",
+    "triggerPrice": ""
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "OrderRequest": {
+    "exchangeSegment": "NSE_EQ",
+    "productType": "INTRADAY",
+    "orderType": "MARKET",
+    "validity": "DAY",
+    "transactionType": "BUY",
+    "securityId": "",
+    "quantity": "",
+    "price": "0",
+    "triggerPrice": ""
+  }
+}

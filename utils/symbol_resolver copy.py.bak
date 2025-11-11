@@ -1,0 +1,127 @@
+"""
+================================================================================
+Module: symbol_resolver.py
+Description:
+    Resolves holdings symbols to Angel One required format (symbol, token, exchange)
+    using NSEEQTYdata.json and instruments.json.
+Usage:
+    from symbol_resolver import SymbolResolver
+================================================================================
+"""
+import os
+import json
+from utils.logger import get_logger
+from config.settings import INSTRUMENTS_FILE, NSE_EQTY_FILE,MASTERDATA_DIR  # <-- direct import
+
+logger = get_logger(__name__)
+
+# ================================================================================
+# CLASS: SymbolResolver
+# ================================================================================
+class SymbolResolver:
+    """
+    Reads holdings and NSE token data to resolve trading symbols for Angel One.
+
+    Attributes:
+        holdings (list): List of holdings read from instruments.json.
+        nse_data (list): List of token info from NSEEQTYdata.json.
+    """
+
+    # ------------------------------------------------------------------------
+    def __init__(self):
+        """
+        Initialize SymbolResolver with holdings and NSE token mapping.
+
+        Args:
+            instruments_file (str): Path to instruments.json
+            nseeqty_file (str): Path to NSEEQTYdata.json
+        """
+        with open(INSTRUMENTS_FILE, "r") as f:
+            self.holdings = json.load(f)
+
+        with open(NSE_EQTY_FILE, "r") as f:
+            self.nse_data = json.load(f)
+
+    # ------------------------------------------------------------------------
+    def resolve_all(self):
+        """
+        Resolve all holdings symbols to objects containing:
+            - symbol: e.g., 'CSLFINANCE-EQ'
+            - token: Angel One / NSE token
+            - exchange: NSE (default)
+
+        Returns:
+            list of dicts: [{symbol, token, exchange}, ...]
+        """
+        resolved_list = []
+        for item in self.holdings:
+            name = item.get("symbol")  # e.g., 'CSLFINANCE'
+            symbol_eq = f"{name}-EQ"
+            token_info = next((x for x in self.nse_data if x["symbol"] == symbol_eq), None)
+            if not token_info:
+                logger.error(f" Token not found for {symbol_eq}, skipping.")
+                continue
+            resolved_list.append({
+                "symbol": symbol_eq,
+                "token": token_info["token"],
+                "exchange": token_info.get("exch_seg", "NSE")
+            })
+        logger.info(f" Resolved {len(resolved_list)} symbols for Angel One.")
+        return resolved_list
+
+    # ------------------------------------------------------------------------
+    def resolve_symbol(self, symbol_name: str):
+        """
+        Resolve a single symbol to Angel One format.
+
+        Args:
+            symbol_name (str): Name of the symbol, e.g., 'CSLFINANCE'
+
+        Returns:
+            dict | None: {symbol, token, exchange} or None if not found
+        """
+        if not symbol_name:
+            return None
+
+        # Normalize: append -EQ only if not already there
+        if not symbol_name.endswith("-EQ"):
+            symbol_eq = f"{symbol_name}-EQ"
+        else:
+            symbol_eq = symbol_name
+        
+        token_info = next((x for x in self.nse_data if x["symbol"] == symbol_eq), None)
+        if not token_info:
+            logger.error(f" Token not found for {symbol_eq}")
+            return None
+        resolved = {
+            "symbol": symbol_eq,
+            "token": token_info["token"],
+            "exchange": token_info.get("exch_seg", "NSE")
+        }
+        logger.info(f"Resolved symbol: {resolved}")
+        return resolved
+    
+    # ---------------------------------------------------------------------
+    # Formatter for resolve_symbol
+    # ---------------------------------------------------------------------
+
+    def resolve_symbol_tradefinder(self, trading_symbol):
+        """
+        Resolve Trading Symbol (already with -EQ) → Token from NSEEQTYdata.json.
+        """
+        nse_file = os.path.join(MASTERDATA_DIR, "NSEEQTYdata.json")
+        if not os.path.exists(nse_file):
+            raise FileNotFoundError("NSEEQTYdata.json missing")
+
+        with open(nse_file, "r") as f:
+            nse_data = json.load(f)
+
+        token_info = next((item for item in nse_data if item.get("symbol") == trading_symbol), None)
+        token = token_info.get("token") if token_info else None
+
+        return {
+            "custom_name": "",
+            "trading_symbol": trading_symbol,
+            "token": token
+        }
+
