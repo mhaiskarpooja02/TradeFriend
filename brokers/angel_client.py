@@ -14,7 +14,7 @@ from SmartApi import SmartConnect
 from utils.logger import get_logger
 import pandas as pd
 from datetime import datetime, timedelta
-from config.settings import api_key, username, pin, totp_qr,DEFAULT_INTERVAL, LOOKBACK_DAYS
+from config.settings import api_key, username, pin, totp_qr,DEFAULT_INTERVAL,LOOKBACK_DAYS, RangeBoundLOOKBACK_DAYS
 
 logger = get_logger(__name__)
 
@@ -167,6 +167,77 @@ class AngelClient:
 
         logger.error(f" Failed to fetch candles for {symbol} ({token}) after {max_retries} attempts")
         return None
+
+    # ================================================================================
+    def get_RangeBoundhistorical_data(
+        self,
+        symbol,
+        token,
+        interval=DEFAULT_INTERVAL,
+        days=None,
+        max_retries=3,
+        delay=2
+    ):
+        """
+        Fetch historical OHLC candles with retry & session reset handling.
+        """
+        session_reset_done = False
+        if days is None:
+            days = RangeBoundLOOKBACK_DAYS 
+            
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=days)
+                logger.info(f"For ({token}) Date Range : from_date {from_date}  to_date {to_date}.")
+                params = {
+                    "exchange": "NSE",
+                    "symboltoken": str(token),
+                    "interval": interval,
+                    "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
+                    "todate": to_date.strftime("%Y-%m-%d %H:%M"),
+                    "symbol": symbol,
+                }
+
+                data = self.smart_api.getCandleData(params)
+                msg = data.get("message", "Unknown error") if isinstance(data, dict) else "No response"
+
+                if not data or "data" not in data:
+                    logger.error(f"{symbol} ({token}) -> No historical data | Response: {msg}")
+                    return None
+
+                if isinstance(data.get("data"), list) and len(data["data"]) == 0:
+                    logger.warning(f"{symbol} ({token}) → No historical data available (empty list)")
+                    return None
+
+                if "Session" in msg and not session_reset_done:
+                    logger.warning("⚠️ Session expired. Re-logging in...")
+                    self.login()
+                    session_reset_done = True
+                    continue
+
+                df = pd.DataFrame(
+                    data["data"],
+                    columns=["datetime", "open", "high", "low", "close", "volume"],
+                )
+                df["datetime"] = pd.to_datetime(df["datetime"])
+                return df
+
+            except Exception as e:
+                err_msg = str(e)
+                logger.error(f"Attempt {attempt}/{max_retries} failed for {symbol} ({token}): {err_msg}")
+
+                if "No data" in err_msg or "No historical" in err_msg:
+                    return None
+
+            if attempt < max_retries:
+                logger.info(f"Retrying {symbol} ({token}) after {delay}s...")
+                time.sleep(delay)
+
+        logger.error(f" Failed to fetch candles for {symbol} ({token}) after {max_retries} attempts")
+        return None
+
 
     # ================================================================================
     def get_intraday_candles(self, symbol: str, token: str, interval="FIFTEEN_MINUTE", lookback_days=5):

@@ -9,7 +9,7 @@ class IndicatorEngine:
     # ---------------------------
     # EMA Crossover Check
     # ---------------------------
-    def check_ema_crossover(self, EMA_SHORT=9, EMA_LONG=21, RSI_PERIOD=14,
+    def check_ema_crossover(self, EMA_SHORT=20, EMA_LONG=50, RSI_PERIOD=14,
                             VOL_PERIOD=20, CANDLES_ABOVE=3, CROSS_LOOKBACK=5, PIVOT_LOOKBACK=20):
         df = self.df.copy()
         for col in ["close", "open", "high", "low", "volume"]:
@@ -174,31 +174,100 @@ class IndicatorEngine:
     # ---------------------------
     # Bollinger Band Momentum Check
     # ---------------------------
+    # def bollinger_momentum(self, period=30, stddev=2):
+    #     df = self.df.copy()
+    #     if df.empty or "close" not in df.columns:
+    #         return {"symbol": self.symbol, "signal": "No Bollinger Signal"}
+
+    #     close = df["close"].values
+    #     df["bb_upper"], df["bb_middle"], df["bb_lower"] = talib.BBANDS(close, timeperiod=period,
+    #                                                                   nbdevup=stddev, nbdevdn=stddev, matype=0)
+    #     df["rsi"] = talib.RSI(close, timeperiod=13)
+    #     last = df.iloc[-1]
+
+
+    #     if last["close"] > last["bb_upper"] and last["rsi"] > 60:
+
+    #         entry = self.safe_number(round(last["close"], 2))
+    #         sl = self.safe_number(round(last["bb_middle"], 2))
+    #         upper = self.safe_number(round(last["bb_upper"], 2))
+
+    #         target1 = self.safe_number(round(entry + (entry - sl) * 0.5, 2))
+    #         target2 = self.safe_number(round(entry + (entry - sl) * 1.0, 2))
+    #         target3 = self.safe_number(round(entry + (entry - sl) * 1.5, 2))
+
+    #         return {
+    #             "symbol": self.symbol,
+    #             "signal": "BB Bullish Breakout",
+    #             "confirmed": "BUY",
+    #             "entry": entry,
+    #             "sl": sl,
+    #             "target1": target1,
+    #             "target2": target2,
+    #             "target3": target3,
+    #         }
+    #     else:
+    #         return {"symbol": self.symbol, "signal": "No Bollinger Signal"}
+
     def bollinger_momentum(self, period=30, stddev=2):
         df = self.df.copy()
-        if df.empty or "close" not in df.columns:
+    
+        # 1. Basic Validation
+        if df.empty or len(df) < 50 or "close" not in df.columns:
             return {"symbol": self.symbol, "signal": "No Bollinger Signal"}
-
-        close = df["close"].values
-        df["bb_upper"], df["bb_middle"], df["bb_lower"] = talib.BBANDS(close, timeperiod=period,
-                                                                      nbdevup=stddev, nbdevdn=stddev, matype=0)
-        df["rsi"] = talib.RSI(close, timeperiod=13)
+    
+        close = df["close"].values.astype(float)
+        
+        high = df["high"].values.astype(float)
+        low = df["low"].values.astype(float)
+        volume = df["volume"].values.astype(float)
+    
+        # 2. Indicator Calculation
+        df["bb_upper"], df["bb_middle"], df["bb_lower"] = talib.BBANDS(
+            close, timeperiod=period, nbdevup=stddev, nbdevdn=stddev, matype=0
+        )
+        df["rsi"] = talib.RSI(close, timeperiod=14)
+        df["adx"] = talib.ADX(high, low, close, timeperiod=14)
+        df["vol_sma"] = talib.SMA(volume, timeperiod=20)
+    
         last = df.iloc[-1]
-
-
-        if last["close"] > last["bb_upper"] and last["rsi"] > 60:
-
+        recent = df.iloc[-5:]
+    
+        # 3. Swing-tuned Conditions (BB Middle based)
+    
+        # Trend intact
+        above_middle = last["close"] > last["bb_middle"]
+    
+        # Healthy pullback near middle band
+        pullback = recent["low"].min() <= last["bb_middle"] * 1.01
+    
+        # Momentum & participation
+        is_strong_trend = last["adx"] >= 20
+        is_healthy_rsi = last["rsi"] > 55
+        is_decent_volume = last["volume"] >= last["vol_sma"] * 0.9
+    
+        # 4. Entry Signal
+        if above_middle and pullback and is_strong_trend and is_healthy_rsi and is_decent_volume:
+        
             entry = self.safe_number(round(last["close"], 2))
-            sl = self.safe_number(round(last["bb_middle"], 2))
-            upper = self.safe_number(round(last["bb_upper"], 2))
-
-            target1 = self.safe_number(round(entry + (entry - sl) * 0.5, 2))
-            target2 = self.safe_number(round(entry + (entry - sl) * 1.0, 2))
-            target3 = self.safe_number(round(entry + (entry - sl) * 1.5, 2))
-
+    
+            # Swing-safe Stop Loss
+            sl = self.safe_number(round(
+                min(recent["low"].min(), last["bb_lower"]), 2
+            ))
+    
+            risk = entry - sl
+            if risk <= 0:
+                return {"symbol": self.symbol, "signal": "No Bollinger Signal"}
+    
+            # Targets (same structure as earlier)
+            target1 = self.safe_number(round(entry + risk * 0.5, 2))
+            target2 = self.safe_number(round(entry + risk * 1.0, 2))
+            target3 = self.safe_number(round(entry + risk * 1.5, 2))
+    
             return {
                 "symbol": self.symbol,
-                "signal": "BB Bullish Breakout",
+                "signal": "BB Swing Continuation",
                 "confirmed": "BUY",
                 "entry": entry,
                 "sl": sl,
@@ -206,8 +275,9 @@ class IndicatorEngine:
                 "target2": target2,
                 "target3": target3,
             }
-        else:
-            return {"symbol": self.symbol, "signal": "No Bollinger Signal"}
+    
+        return {"symbol": self.symbol, "signal": "No Bollinger Signal"}
+    
 
     # ---------------------------
     # Target Calculation
@@ -408,3 +478,110 @@ Special Note: {sig.get('note', '')}
             retrace_section = "\n\n" + "=" * 60 + "\n\n" + "📉 Rejected / Waitlist:\n" + ("\n" + "-" * 60 + "\n").join(retrace_blocks)
 
         return summary + trade_plan_section + retrace_section + "\n" + "═" * 60 + "\n"
+    
+    def strategy_mid_band_entry(self, period=20):
+        """
+        TRADITIONAL MID-BAND TO UPPER-BAND TARGET
+        Logic: Buy when price crosses above the middle band with a Bullish Engulfing.
+        """
+        df = self.df.copy()
+        if df.empty or len(df) < 50:
+            return None
+    
+        # Fix: Ensure float64 for TA-Lib compatibility
+        close = df["close"].values.astype(float)
+        open_p = df["open"].values.astype(float)
+    
+        # Indicators
+        df["bb_upper"], df["bb_middle"], df["bb_lower"] = talib.BBANDS(close, timeperiod=period)
+        df["ema_50"] = talib.EMA(close, timeperiod=50)
+        
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+    
+        # 1. Trigger: Middle Band Breakout (Price crosses from below to above)
+        crossed_mid = prev["close"] <= prev["bb_middle"] and last["close"] > last["bb_middle"]
+        
+        # 2. Pattern: Bullish Engulfing (Current Green engulfs Previous Red)
+        is_engulfing = (last["close"] > last["open"] and 
+                        prev["close"] < prev["open"] and 
+                        last["close"] >= prev["open"] and 
+                        last["open"] <= prev["close"])
+        
+        # 3. Filter: EMA 50 Slope (Ensures we are not in a downtrend)
+        is_uptrend = last["ema_50"] > df["ema_50"].iloc[-5]
+    
+        if crossed_mid and is_engulfing and is_uptrend:
+            entry = self.safe_number(round(last["close"], 2))
+            target = self.safe_number(round(last["bb_upper"], 2))
+            sl = self.safe_number(round(last["bb_middle"] * 0.98, 2)) # 2% buffer below MA
+    
+            return {
+                "symbol": self.symbol,
+                "strategy": "Mid-Band Recovery",
+                "signal": "BUY",
+                "entry": entry,
+                "sl": sl,
+                "target1": target,
+                "reason": "Mid-Band Cross + Engulfing + EMA50 Support"
+            }
+        return None
+    
+    
+    def scanner_multi_strategy(self, period=20):
+        """
+        MULTI-STRATEGY SCANNER
+        Logic: Detects either a 'Support Rebound' (Dip Buy) or 'Upper Breakout' (Momentum).
+        """
+        df = self.df.copy()
+        if df.empty or len(df) < 50:
+            return None
+    
+        close = df["close"].values.astype(float)
+        volume = df["volume"].values.astype(float)
+    
+        # Indicators
+        df["bb_upper"], df["bb_middle"], df["bb_lower"] = talib.BBANDS(close, timeperiod=period)
+        df["rsi"] = talib.RSI(close, timeperiod=14)
+        df["ema_50"] = talib.EMA(close, timeperiod=50)
+        vol_sma = talib.SMA(volume, timeperiod=20)
+        
+        last = df.iloc[-1]
+        
+        # Global Trend Filter: Avoid stocks in a long-term decline
+        if last["ema_50"] <= df["ema_50"].iloc[-5]:
+            return None
+    
+        # --- SETUP 1: SUPPORT REBOUND (Safe Value Entry) ---
+        # Price pulls back to middle band but stays above it
+        is_near_mid = last["low"] < (last["bb_middle"] * 1.01) and last["close"] > last["bb_middle"]
+        
+        if is_near_mid and last["close"] > last["open"] and last["rsi"] < 65:
+            return {
+                "symbol": self.symbol,
+                "strategy": "Support Rebound",
+                "signal": "BUY",
+                "entry": self.safe_number(round(last["close"], 2)),
+                "sl": self.safe_number(round(last["bb_middle"] * 0.98, 2)),
+                "target1": self.safe_number(round(last["bb_upper"], 2)),
+                "reason": "Dip-buy at Middle Band"
+            }
+    
+        # --- SETUP 2: UPPER BREAKOUT (Aggressive Momentum) ---
+        # Price explodes above upper band with high volume
+        is_breakout = last["close"] > last["bb_upper"]
+        is_high_vol = last["volume"] > (vol_sma[-1] * 1.3) # 30% Volume surge
+        
+        if is_breakout and is_high_vol and (60 < last["rsi"] < 78):
+            risk = last["close"] - last["bb_middle"]
+            return {
+                "symbol": self.symbol,
+                "strategy": "Upper Breakout",
+                "signal": "BUY",
+                "entry": self.safe_number(round(last["close"], 2)),
+                "sl": self.safe_number(round(last["bb_middle"], 2)),
+                "target1": self.safe_number(round(last["close"] + (risk * 2), 2)),
+                "reason": "Momentum Breakout with Volume"
+            }
+    
+        return None

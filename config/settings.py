@@ -9,7 +9,8 @@ LOG_DIR = os.path.join(BASE_DIR, "logs")
 MASTERDATA_DIR = os.path.join(BASE_DIR, "masterdata")  # <-- new
 OUTPUT_FOLDER = os.path.join(BASE_DIR, "output")
 CONTROL_FOLDER = os.path.join(BASE_DIR, "control")
-
+RangeBoundInput_DIR= os.path.join(BASE_DIR, "RangeBoundInput")
+RangeBoundOutput_DIR= os.path.join(BASE_DIR, "RangeBoundOutput")
 INPUT_BASE = os.path.join(BASE_DIR, "Input")
 
 # File paths
@@ -53,6 +54,7 @@ EMA_SHORT = indicators.get("ema_short", 9)
 EMA_LONG = indicators.get("ema_long", 21)
 CANDLES_ABOVE = indicators.get("candles_above", 2)
 LOOKBACK_DAYS = indicators.get("lookback_days", 90)
+RangeBoundLOOKBACK_DAYS = indicators.get("RangeBoundlookback_days", 365)
 DEFAULT_INTERVAL = indicators.get("default_interval", "ONE_DAY")
 RSI_PERIOD = indicators.get("rsi_period", 14)
 RSI_OVERBOUGHT = indicators.get("rsi_overbought", 70)

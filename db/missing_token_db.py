@@ -44,37 +44,70 @@ class MissingTokenDB:
         except Exception as e:
             logger.error(f"Failed to ensure active flags: {e}")
 
-    def add_or_update(self, symbol: str, name: str = None, active: int = 1):
-        """
-        Insert a missing token entry if not exists.
-        If exists with active=0 and we now have valid token, update to active=1.
-        """
-        try:
-            cur = self.conn.cursor()
-            cur.execute("SELECT active FROM missing_tokens WHERE symbol = ?", (symbol,))
-            row = cur.fetchone()
-            logger.info(f"SELECTED data for Symbol {symbol} in add_or_update")
-            if row:
-                current_status = row[0]
-                if current_status == 1 :
-                    logger.info(f"Symbol {symbol} already active, skipping insert. current_status {current_status}")
-                elif current_status == 0 and active == 1:
-                    with self.conn:
-                        self.conn.execute(
-                            "UPDATE missing_tokens SET active = ?, name = ? WHERE symbol = ?",
-                            (active, name, symbol),
-                        )
-                    logger.info(f"Re-activated missing token: {symbol}")
-            else:
-                with self.conn:
-                    self.conn.execute(
-                        "INSERT INTO missing_tokens (symbol, name, active) VALUES (?, ?, ?)",
-                        (symbol, name, active),
-                    )
-                logger.info(f"Stored missing token: {symbol} ({name})")
 
-        except Exception as e:
-            logger.error(f"Error storing missing token {symbol}: {e}")
+    def add_or_update(self, symbol: str, name: str = None, active: int = 1):
+         """
+         Insert a missing token entry if not exists.
+         If exists with active=0 and we now have valid token, update to active=1.
+         """
+    
+         try:
+             # -----------------------------
+             # 🔒 HARD VALIDATION
+             # -----------------------------
+             if not isinstance(symbol, str):
+                 logger.warning(f"Skipping invalid symbol type: {symbol}")
+                 return
+    
+             symbol = symbol.strip()
+             if not symbol or symbol.startswith("<sqlite3.Row"):
+                 logger.warning(f"Skipping invalid symbol value: {symbol}")
+                 return
+    
+             cur = self.conn.cursor()
+             cur.execute(
+                 "SELECT active FROM missing_tokens WHERE symbol = ?",
+                 (symbol,)
+             )
+             row = cur.fetchone()
+    
+             logger.info(f"SELECTED data for Symbol {symbol} in add_or_update")
+    
+             if row:
+                 current_status = row[0]
+    
+                 if current_status == 1:
+                     logger.info(
+                         f"Symbol {symbol} already active, skipping insert"
+                     )
+    
+                 elif current_status == 0 and active == 1:
+                     with self.conn:
+                         self.conn.execute(
+                             """
+                             UPDATE missing_tokens
+                             SET active = ?, name = ?
+                             WHERE symbol = ?
+                             """,
+                             (active, name, symbol),
+                         )
+                     logger.info(f"Re-activated missing token: {symbol}")
+    
+             else:
+                 with self.conn:
+                     self.conn.execute(
+                         """
+                         INSERT INTO missing_tokens (symbol, name, active)
+                         VALUES (?, ?, ?)
+                         """,
+                         (symbol, name, active),
+                     )
+                 logger.info(f"Stored missing token: {symbol} ({name})")
+    
+             cur.close()
+    
+         except Exception as e:
+             logger.error(f"Error storing missing token {symbol}: {e}", exc_info=True)
 
     def update_active_status(self, symbol: str, active: int, name: str = None):
         """
@@ -102,7 +135,8 @@ class MissingTokenDB:
        try:
            logger.info("Calling get_all() in MissingTokenDB")
            cur = self.conn.cursor()
-           cur.execute("SELECT symbol, name, active FROM missing_tokens")
+           cur.execute("SELECT symbol, name, active FROM missing_tokens ")
+        #    cur.execute("SELECT symbol, name, active FROM missing_tokens WHERE symbol LIKE 'CONNPLEX%'")
            rows = cur.fetchall()
            logger.info(f"Fetched {len(rows)} rows from missing_tokens table")
            logger.debug(f"Rows data: {rows}")  # debug level for full data
@@ -110,3 +144,22 @@ class MissingTokenDB:
        except Exception as e:
            logger.exception(f"Error fetching missing tokens: {e}")
            return []
+    def cleanup_invalid_symbols(self):
+        """
+        Remove corrupted / invalid symbols safely (SQLite compatible)
+        """
+        try:
+            with self.conn:
+                self.conn.execute("""
+                    DELETE FROM missing_tokens
+                    WHERE symbol IS NULL
+                       OR TRIM(symbol) = ''
+                       OR symbol LIKE '<sqlite3.Row%'
+                       OR symbol LIKE '%object at%'
+                """)
+            logger.info("Cleaned up invalid symbols from missing_tokens table")
+        except Exception as e:
+            logger.error(f"Failed to cleanup invalid symbols: {e}")
+
+    def _is_valid_symbol(self, symbol):
+        return isinstance(symbol, str) and symbol.strip() and not symbol.startswith("<sqlite3.Row")

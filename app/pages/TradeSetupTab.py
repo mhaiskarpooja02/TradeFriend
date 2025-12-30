@@ -2,6 +2,7 @@ import os
 import zipfile
 import logging
 from datetime import datetime
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import ttkbootstrap as tb
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from config.settings import NSE_EQTY_FILE, INPUT_BASE, OUTPUT_FOLDER
-    from core.trade_finder_runner import run_trade_finder
+    from core.trade_finder_runner import run_trade_finder,run_existing_trade_finder
     logger.info("✅ Trade Finder imports loaded successfully.")
 except Exception as e:
     logger.warning(f" Trade Finder imports failed — using fallback: {e}")
@@ -67,6 +68,7 @@ class TradeSetupTab(tb.Frame):
         tb.Button(control_frame, text="Upload File", bootstyle="info", command=self.upload_file).pack(side="left", padx=8)
         tb.Button(control_frame, text="Refresh List", bootstyle="secondary", command=self.load_today_files).pack(side="left", padx=8)
         tb.Button(control_frame, text="🚀 Trade Finder", bootstyle="success", command=self.run_trade_search).pack(side="left", padx=8)
+        tb.Button(control_frame, text="🚀 Existing Trade Finder", bootstyle="success", command=self.run_existingtrade_finder).pack(side="left", padx=8)
 
         # === Progress Label ===
         self.progress_label = tb.Label(self, text="", font=("Arial", 12, "italic"))
@@ -116,33 +118,44 @@ class TradeSetupTab(tb.Frame):
     # 📁 File Upload
     # -------------------------------------------------------------------------
     def upload_file(self):
-        file_path = filedialog.askopenfilename(title="Select CSV file", filetypes=[("CSV Files", "*.csv")])
-        if not file_path:
+        file_paths = filedialog.askopenfilenames(
+            title="Select CSV files", filetypes=[("CSV Files", "*.csv")]
+        )
+        if not file_paths:
             return
-
+    
         prefix = self.naming_var.get()
         today = datetime.today().strftime("%Y%m%d")
-        ext = os.path.splitext(file_path)[1] or ".csv"
-
         dest_dir = os.path.join(INPUT_BASE, today)
         os.makedirs(dest_dir, exist_ok=True)
-
-        # Determine next counter file
-        existing = [f for f in os.listdir(dest_dir) if f.startswith(prefix + today)]
-        next_num = len(existing) + 1
-        dest_name = f"{prefix}{today}{next_num:02d}{ext}"
-        dest_path = os.path.join(dest_dir, dest_name)
-
-        try:
-            with open(file_path, "rb") as src, open(dest_path, "wb") as dst:
-                dst.write(src.read())
-
-            logger.info(f"📂 Uploaded file saved as {dest_name}")
-            messagebox.showinfo("Upload Successful", f"File saved as: {dest_name}")
+    
+        uploaded_files = []
+    
+        for file_path in file_paths:
+            ext = os.path.splitext(file_path)[1] or ".csv"
+    
+            # Determine next counter file
+            existing = [f for f in os.listdir(dest_dir) if f.startswith(prefix + today)]
+            next_num = len(existing) + 1
+            dest_name = f"{prefix}{today}{next_num:02d}{ext}"
+            dest_path = os.path.join(dest_dir, dest_name)
+    
+            try:
+                with open(file_path, "rb") as src, open(dest_path, "wb") as dst:
+                    dst.write(src.read())
+    
+                uploaded_files.append(dest_name)
+                logger.info(f"📂 Uploaded file saved as {dest_name}")
+    
+            except Exception as e:
+                logger.exception(f"Failed to upload {file_path}")
+                messagebox.showerror("Error", f"File upload failed:\n{e}")
+    
+        if uploaded_files:
+            messagebox.showinfo(
+                "Upload Successful", f"{len(uploaded_files)} file(s) uploaded:\n" + "\n".join(uploaded_files)
+            )
             self.load_today_files()
-        except Exception as e:
-            logger.exception(" Upload failed")
-            messagebox.showerror("Error", f"File upload failed:\n{e}")
     # -------------------------------------------------------------------------
     # 📋 refresh folder list
     # -------------------------------------------------------------------------
@@ -293,3 +306,68 @@ class TradeSetupTab(tb.Frame):
             self.progress_label.configure(text="")
             self.update_idletasks()
 
+    # -------------------------------------------------------------------------
+    # 🚀 Run existing Trade Finder
+    # -------------------------------------------------------------------------
+    def run_existingtrade_finder(self):
+        """Runs Trade Finder using existing data (no folder + no DB loading)."""
+
+        self.progress_label.configure(text="⏳ Running Existing Trade Finder...")
+        self.update_idletasks()
+
+        # Time-based output folder
+        selected_folder = datetime.today().strftime("%Y%m%d_%H%M%S")
+        output_dir = os.path.join(OUTPUT_FOLDER, f"Existing_{selected_folder}")
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            logger.info(f"🚀 Starting Existing Trade Finder → output: {output_dir}")
+
+            # -----------------------------------------------------
+            # DIRECT CALL → You will implement this
+            # Should return: success (bool), output_files (list)
+            # -----------------------------------------------------
+          
+            success, output_files = run_existing_trade_finder(output_dir)
+            # -----------------------------------------------------
+
+            if not success or not output_files:
+                messagebox.showinfo("Existing Trade Finder", "No signals generated.")
+                logger.warning("⚠️ Existing Trade Finder returned no data.")
+                return
+
+            # Prepare ZIP file
+            zip_path = os.path.join(OUTPUT_FOLDER, f"ExistingTrade_{selected_folder}.zip")
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for f in output_files:
+                    if os.path.exists(f):
+                        zipf.write(f, os.path.basename(f))
+
+            # Ask user where to save ZIP
+            save_path = filedialog.asksaveasfilename(
+                title="Save ExistingTrade ZIP",
+                defaultextension=".zip",
+                initialfile=os.path.basename(zip_path),
+                filetypes=[("ZIP Files", "*.zip")],
+            )
+
+            if save_path:
+                os.replace(zip_path, save_path)
+                messagebox.showinfo(
+                    "Existing Trade Finder",
+                    f"ZIP file saved successfully:\n{save_path}"
+                )
+                logger.info(f"✅ ExistingTrade ZIP saved → {save_path}")
+
+            # Cleanup intermediate files
+            for f in output_files:
+                if os.path.exists(f):
+                    os.remove(f)
+
+        except Exception as e:
+            logger.exception("💥 Existing Trade Finder execution failed")
+            messagebox.showerror("Error", f"Error occurred:\n{e}")
+
+        finally:
+            self.progress_label.configure(text="")
+            self.update_idletasks()

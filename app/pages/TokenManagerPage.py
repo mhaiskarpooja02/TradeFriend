@@ -1,15 +1,22 @@
 import os
 import json
 import logging
+import random
+import time
 import tkinter as tk
 from tkinter import messagebox
-
+import csv
+from tkinter import filedialog
 import ttkbootstrap as tb
 from config.settings import NSE_EQTY_FILE
 from db.missing_token_db import MissingTokenDB
 from utils.instrumenthelper import InstrumentHelper
 from utils.symbol_resolver import SymbolResolver
-
+from brokers.angel_client import AngelClient
+from datetime import datetime
+import pandas as pd
+from config.TradeFriendConfig import SEARCH_DELAY
+from db.tradefindinstrument_db import TradeFindDB
 logger = logging.getLogger(__name__)
 
 class TokenManagerPage(tb.Frame):
@@ -20,6 +27,9 @@ class TokenManagerPage(tb.Frame):
         # DB & Helper
         self.db = MissingTokenDB()
         self.helper = InstrumentHelper()
+        self.dbinstrument = TradeFindDB()
+
+        self.db.cleanup_invalid_symbols()
 
         # Memory cache
         self.all_tokens = self.db.get_all() or []  # list of all tokens
@@ -48,6 +58,20 @@ class TokenManagerPage(tb.Frame):
                        bootstyle="danger", command=self.refresh_table).pack(side="left", padx=5)
         tb.Radiobutton(search_frame, text="All", variable=self.filter_var, value="all",
                        bootstyle="secondary", command=self.refresh_table).pack(side="left", padx=5)
+
+        tb.Button(
+    search_frame,
+    text="Validate & Export Tokens",
+    bootstyle="primary",
+    command=self.validate_tokens_with_history
+    ).pack(side="left", padx=10)
+        
+        tb.Button(
+    search_frame,
+    text="Resolve All Tokens",
+    bootstyle="primary",
+    command=self.resolve_alltokens
+    ).pack(side="left", padx=10)
 
         # --- Scrollable Table ---
         self.setup_table()
@@ -145,7 +169,11 @@ class TokenManagerPage(tb.Frame):
         try:
             search_name = symbol.replace("-EQ","")
             result = self.helper.search_symbol("NSE", search_name)
+
+            
             extracted_list = SymbolResolver.extract_symbol_objects(result)
+
+
             if not extracted_list:
                 messagebox.showerror("Error", f"No valid entries found for {symbol}.")
                 return
@@ -170,12 +198,96 @@ class TokenManagerPage(tb.Frame):
                     break
             self.db.update_active_status(symbol=symbol, name=symbol, active=0)
 
+            for item in extracted_list:
+                trading_symbol = item.get("symbol")
+                token = item.get("token")
+
+                self.dbinstrument.upsert_symbol(
+                          symbol=symbol,
+                          trading_symbol=trading_symbol,
+                          token=str(token)
+                      )
+
             messagebox.showinfo("Success", f"Data for {symbol} saved to JSON & DB.")
             self.refresh_table()
 
         except Exception as e:
             logger.exception(f"Error resolving token {symbol}: {e}")
             messagebox.showerror("Error", f"Error resolving token {symbol}: {e}")
+
+    # ---------------- Resolve Token ----------------
+    def resolve_alltokens(self):
+      try:
+          allsymbols = self.all_tokens.copy()
+
+          # Always enforce active = 1
+          symbols = [s for s in allsymbols if s.get("active", 1) == 1]
+
+          if not symbols:
+              messagebox.showwarning("No Symbols", "No symbols to process.")
+              return
+
+          active_count = len(symbols)
+          logger.info(f"Active symbols count: {active_count}")
+
+          for item in symbols:
+              symbol = item.get("symbol")
+
+              try:
+                  search_name = symbol.replace("-EQ", "")
+                  result = self.helper.search_symbol("NSE", search_name)
+
+                  extracted_list = SymbolResolver.extract_symbol_objects(result)
+
+                  if not extracted_list:
+                    #   messagebox.showerror(
+                    #       "Error", f"No valid entries found for {symbol}."
+                    #   )
+                      continue   # ✅ move to next symbol
+
+                  preview_msg = "\n".join([str(d) for d in extracted_list])
+                  if not messagebox.askyesno(
+                      "Preview Data",
+                      f"Data found for {symbol}:\n\n{preview_msg}\n\nSave to JSON & DB?"
+                  ):
+                      continue   # ✅ user skipped
+
+                  os.makedirs(os.path.dirname(NSE_EQTY_FILE) or ".", exist_ok=True)
+
+                  existing_data = []
+                  if os.path.exists(NSE_EQTY_FILE):
+                      with open(NSE_EQTY_FILE, "r") as f:
+                          existing_data = json.load(f)
+
+                  existing_data.extend(extracted_list)
+
+                  with open(NSE_EQTY_FILE, "w") as f:
+                      json.dump(existing_data, f, indent=4)
+
+                  # Update in-memory cache & DB
+                  for token in self.all_tokens:
+                      if token.get("symbol") == symbol:
+                          token["active"] = 0
+                          break
+
+                  self.db.update_active_status(
+                      symbol=symbol, name=symbol, active=0
+                  )
+
+                  
+
+              except Exception as inner_e:
+                  logger.exception(f"Error processing symbol {symbol}: {inner_e}")
+                  messagebox.showerror(
+                      "Error", f"Error processing {symbol}: {inner_e}"
+                  )
+                  continue   # ✅ continue loop even after error
+
+      except Exception as e:
+          logger.exception(f"Fatal error in resolve_alltokens: {e}")
+          messagebox.showerror("Error", f"Fatal error: {e}")
+
+      self.refresh_table()
 
     # ---------------- Autocomplete ----------------
     def on_keyrelease(self, event):
@@ -211,3 +323,384 @@ class TokenManagerPage(tb.Frame):
         self.search_var.set(value)
         self.lb_autocomplete.place_forget()
         self.refresh_table()
+
+    def export_valid_csv(self, data):
+         # Create unique default filename
+        today_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"TradeFriend_Histdattok_{today_str}.csv"
+
+        file_path = filedialog.asksaveasfilename(
+            title="Save Valid Tokens",
+            defaultextension=".csv",
+            initialfile=default_filename,
+            filetypes=[("CSV Files", "*.csv")]
+        )
+
+        if not file_path:
+            return
+
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["symbol", "token", "symbolName"]
+            )
+            writer.writeheader()
+            writer.writerows(data)
+
+        messagebox.showinfo("Success", f"CSV saved successfully:\n{file_path}")
+
+    # def validate_tokens_with_history(self):
+    #     MIN_ROWS = 2   # or 5 / 10 depending on your logic
+    #     try:
+    #         allsymbols = self.all_tokens.copy()
+
+    #         # -------------------------------------------------
+    #         # ✅ STEP 1: Normalize symbols safely
+    #         # -------------------------------------------------
+    #         symbols = []
+
+    #         for s in allsymbols:
+    #             try:
+    #                 # Case 1: string
+    #                 if isinstance(s, str):
+    #                     if s.strip():
+    #                         symbols.append(s.strip())
+    #                     continue
+
+    #                 # Case 2: sqlite3.Row
+    #                 if not isinstance(s, dict):
+    #                     active = s["active"] if "active" in s.keys() else 1
+    #                     if active != 1:
+    #                         continue
+
+    #                     symbol = s["symbol"]
+    #                     if isinstance(symbol, str) and symbol.strip():
+    #                         symbols.append(symbol.strip())
+    #                     continue
+
+    #                 # Case 3: dict
+    #                 active = s.get("active", 1)
+    #                 if active != 1:
+    #                     continue
+
+    #                 symbol = s.get("symbol")
+    #                 if isinstance(symbol, str) and symbol.strip():
+    #                     symbols.append(symbol.strip())
+
+    #             except Exception:
+    #                 continue
+
+    #         if not symbols:
+    #             messagebox.showwarning("No Symbols", "No symbols to process.")
+    #             return
+
+    #         logger.info(f"Active symbols count: {len(symbols)}")
+
+    #         # -------------------------------------------------
+    #         # ✅ STEP 2: Broker Login
+    #         # -------------------------------------------------
+    #         broker = AngelClient()
+    #         if getattr(broker, "smart_api", None) is None:
+    #             logger.error("Broker login failed.")
+    #             return
+
+    #         valid_data = []
+    #         failed = []
+
+    #         # -------------------------------------------------
+    #         # 🔁 STEP 3: Validate symbols
+    #         # -------------------------------------------------
+    #         for symbol in symbols:
+    #             try:
+    #                 time.sleep(SEARCH_DELAY + random.uniform(0, 0.2))
+
+    #                 search_name = symbol.replace("-EQ", "")
+    #                 result = self.helper.search_symbol("NSE", search_name)
+
+    #                 if not result or not isinstance(result, dict) or not result.get("data"):
+    #                     failed.append(f"{symbol} → Search returned empty")
+    #                     continue
+   
+    #                 for r in result["data"]:
+    #                     trading_symbol = r.get("tradingsymbol")
+    #                     token = r.get("symboltoken")
+
+    #                     if not trading_symbol or not token:
+    #                         continue
+
+    #                     # -------------------------------------------------
+    #                     # 2️⃣ HISTORICAL DATA CHECK
+    #                     # -------------------------------------------------
+
+
+    #                     df = broker.get_historical_data(trading_symbol, token)
+
+    #                     logger.info("%s → df object id=%s, initial shape=%s",trading_symbol, id(df), df.shape)
+
+    #                     if df is None or df.empty:
+    #                         failed.append(f"{trading_symbol} → No historical data")
+    #                         continue
+
+    #                     df = df.copy()
+
+    #                     required_cols = ["close", "open", "high", "low", "volume"]
+    #                     for col in required_cols:
+    #                         if col in df.columns:
+    #                             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    #                     if "close" not in df.columns:
+    #                         failed.append(f"{trading_symbol} → Missing close column")
+    #                         continue
+
+    #                     df = df.dropna(subset=["close"])
+
+    #                     logger.info("%s → rows after numeric cleanup=%d", trading_symbol, len(df))
+
+    #                     # ✅ ROW COUNT CHECK (this filters CONNPLEX-ST)
+    #                     row_count = len(df)
+
+    #                     if row_count < MIN_ROWS:
+
+    #                         logger.info("%s → REJECTED (rows=%d, MIN_ROWS=%d)",trading_symbol, row_count, MIN_ROWS)
+    #                         failed.append(
+    #                             f"{trading_symbol} → Insufficient data points ({row_count})"
+    #                         )
+    #                         continue
+
+    #                     logger.info("%s → PASSED row-count validation (rows=%d)",trading_symbol, row_count)
+
+    #                     if len(df) <= 1:
+    #                         failed.append(f"{trading_symbol} → Insufficient data points")
+    #                         continue
+
+    #                     logger.info("Final valid symbols:")
+    #                     # ✅ VALID SYMBOL
+    #                     valid_data.append({
+    #                         "symbol": trading_symbol,
+    #                         "token": str(token),
+    #                         "symbolName": trading_symbol.split("-")[0]
+    #                     })
+
+    #             except Exception as e:
+    #                 failed.append(f"{symbol} → {str(e)}")
+
+    #         # -------------------------------------------------
+    #         # ✅ STEP 4: Export result
+    #         # -------------------------------------------------
+    #         if not valid_data:
+    #             messagebox.showinfo("Result", "No valid symbols found.")
+    #             return
+
+    #         self.export_valid_csv(valid_data)
+
+    #         messagebox.showinfo(
+    #             "Completed",
+    #             f"Valid: {len(valid_data)}\nFailed: {len(failed)}"
+    #         )
+
+    #     except Exception as e:
+    #         logger.exception("Validation failed")
+    #         messagebox.showerror("Error", str(e))
+
+    def validate_tokens_with_history(self):
+        MIN_ROWS = 2
+        SERIES_PRIORITY = ["-SM", "-EQ", "-SL", "-SQ", "-ST"]
+    
+        try:
+            allsymbols = self.all_tokens.copy()
+    
+            # -------------------------------------------------
+            # ✅ STEP 1: Normalize symbols
+            # -------------------------------------------------
+            symbols = []
+    
+            for s in allsymbols:
+                try:
+                    # Case 1: string
+                    if isinstance(s, str):
+                        if s.strip():
+                            symbols.append(s.strip())
+                        continue
+                    
+                    # Case 2: sqlite3.Row
+                    if not isinstance(s, dict):
+                        active = s["active"] if "active" in s.keys() else 1
+                        if active != 1:
+                            continue
+                        
+                        symbol = s["symbol"]
+                        if isinstance(symbol, str) and symbol.strip():
+                            symbols.append(symbol.strip())
+                        continue
+                    
+                    # Case 3: dict
+                    active = s.get("active", 1)
+                    if active != 1:
+                        continue
+                    
+                    symbol = s.get("symbol")
+                    if isinstance(symbol, str) and symbol.strip():
+                        symbols.append(symbol.strip())
+    
+                except Exception:
+                    continue
+                
+            if not symbols:
+                messagebox.showwarning("No Symbols", "No symbols to process.")
+                return
+    
+            logger.info("Active symbols count: %d", len(symbols))
+    
+            # -------------------------------------------------
+            # ✅ STEP 2: Broker Login
+            # -------------------------------------------------
+            broker = AngelClient()
+            if getattr(broker, "smart_api", None) is None:
+                logger.error("Broker login failed.")
+                return
+    
+            valid_data = []
+            failed = []
+    
+            # -------------------------------------------------
+            # 🔁 STEP 3: Validate symbols
+            # -------------------------------------------------
+            for symbol in symbols:
+                try:
+                    time.sleep(SEARCH_DELAY + random.uniform(0, 0.2))
+    
+                    search_name = symbol.replace("-EQ", "")
+                    result = self.helper.search_symbol("NSE", search_name)
+    
+                    if not result or not isinstance(result, dict) or not result.get("data"):
+                        failed.append(f"{symbol} → Search returned empty")
+                        continue
+                    
+                    data = result["data"]
+    
+                    # -------------------------------------------------
+                    # 🔢 Sort series by priority (SM first, ST last)
+                    # -------------------------------------------------
+                    def series_rank(ts):
+                        for i, suffix in enumerate(SERIES_PRIORITY):
+                            if ts.endswith(suffix):
+                                return i
+                        return len(SERIES_PRIORITY)
+    
+                    data = sorted(
+                        data,
+                        key=lambda x: series_rank(x.get("tradingsymbol", ""))
+                    )
+    
+                    selected = False
+    
+                    # -------------------------------------------------
+                    # 🔍 Try each series ONE BY ONE
+                    # -------------------------------------------------
+                    for r in data:
+                        trading_symbol = r.get("tradingsymbol")
+                        token = r.get("symboltoken")
+    
+                        if not trading_symbol or not token:
+                            continue
+                        
+                        logger.info(
+                            "%s → trying series %s",
+                            search_name, trading_symbol
+                        )
+    
+                        df = broker.get_historical_data(trading_symbol, token)
+    
+                        if df is None or df.empty:
+                            logger.info("%s → no historical data", trading_symbol)
+                            continue
+                        
+                        df = df.copy(deep=True)
+    
+                        logger.info(
+                            "%s → df id=%s, shape=%s",
+                            trading_symbol, id(df), df.shape
+                        )
+    
+                        required_cols = ["close", "open", "high", "low", "volume"]
+                        for col in required_cols:
+                            if col in df.columns:
+                                df[col] = pd.to_numeric(df[col], errors="coerce")
+    
+                        if "close" not in df.columns:
+                            logger.info("%s → missing close column", trading_symbol)
+                            continue
+                        
+                        df = df.dropna(subset=["close"])
+                        df = df[df["close"] > 0]
+    
+                        logger.info(
+                            "%s → rows after cleanup=%d",
+                            trading_symbol, len(df)
+                        )
+    
+                        if "close" in df.columns:
+                            logger.info(
+                                "%s → close stats: count=%d, unique=%d, min=%s, max=%s",
+                                trading_symbol,
+                                df["close"].count(),
+                                df["close"].nunique(),
+                                df["close"].min(),
+                                df["close"].max()
+                            )
+    
+                        row_count = len(df)
+    
+                        if row_count < MIN_ROWS:
+                            logger.info(
+                                "%s → rejected (rows=%d, MIN_ROWS=%d)",
+                                trading_symbol, row_count, MIN_ROWS
+                            )
+                            continue
+                        
+                        # -------------------------------------------------
+                        # ✅ FIRST VALID SERIES FOUND → STOP
+                        # -------------------------------------------------
+                        logger.info(
+                            "%s → SELECTED series %s (rows=%d)",
+                            search_name, trading_symbol, row_count
+                        )
+    
+                        valid_data.append({
+                            "symbol": trading_symbol,
+                            "token": str(token),
+                            "symbolName": search_name
+                        })
+    
+                        selected = True
+                        break
+                    
+                    if not selected:
+                        failed.append(f"{symbol} → No valid series found")
+    
+                except Exception as e:
+                    logger.exception("%s → Validation error", symbol)
+                    failed.append(f"{symbol} → {str(e)}")
+    
+            # -------------------------------------------------
+            # ✅ STEP 4: Export result
+            # -------------------------------------------------
+            if not valid_data:
+                messagebox.showinfo("Result", "No valid symbols found.")
+                return
+    
+            logger.info("Final valid symbols:")
+            for v in valid_data:
+                logger.info("CSV → %s", v["symbol"])
+    
+            self.export_valid_csv(valid_data)
+    
+            messagebox.showinfo(
+                "Completed",
+                f"Valid: {len(valid_data)}\nFailed: {len(failed)}"
+            )
+    
+        except Exception as e:
+            logger.exception("Validation failed")
+            messagebox.showerror("Error", str(e))
+    

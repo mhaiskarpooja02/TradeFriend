@@ -8,6 +8,8 @@ from ttkbootstrap.constants import *
 from datetime import datetime
 
 from app.config_popups.BrokerConfigPopup import BrokerConfigPopup
+from app.pages.TradeFriendDashboard import TradeFriendDashboard
+from app.pages.RangeboundTab import RangeboundTab
 from app.pages.TradeSetupTab import TradeSetupTab
 from app.pages.HoldingsTab import HoldingsTab
 from app.pages.TokenManagerPage import TokenManagerPage
@@ -81,7 +83,10 @@ class TradeMadeEasyApp(tb.Window):
             ("Trade Setup", TradeSetupTab),
             ("Holdings", HoldingsTab),
             ("Token Manager", TokenManagerPage),
-            ("Trade Analysis", TradeAnalysisTab)
+            ("Rangebound", RangeboundTab),
+            ("Trade Analysis", TradeAnalysisTab),
+            ("Watchlist Dashboard", TradeFriendDashboard)
+              
         ]
 
         for name, page_class in nav_buttons:

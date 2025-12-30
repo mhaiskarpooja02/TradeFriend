@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 
 # Import the pages (these files are created by setup script)
+from app.pages import TradeFriendDashboard
 from app.pages.DashboardTab import DashboardTab
 from app.pages.TradeAnalysisTab import TradeAnalysisTab
 from app.pages.TradeSetupTab import TradeSetupTab
@@ -68,6 +69,7 @@ def run_app():
     pages["TradeSetup"] = TradeSetupTab(main_frame)
     pages["Holdings"] = HoldingsTab(main_frame)
     pages["TokenManager"] = TokenManagerPage(main_frame)
+    pages["TradeFriendDashboard"] = TradeFriendDashboard(main_frame)
 
     # Navigation buttons
     def show_page(key):
@@ -78,6 +80,7 @@ def run_app():
 
     btn_specs = [
         ("Dashboard", "Dashboard"),
+        ("TradeFriendDashboard", "TradeFriendDashboard"),
         ("Trade Finder", "TradeSetup"),
         ("Holdings", "Holdings"),
         ("Trade Analysis", "TradeAnalysis"),

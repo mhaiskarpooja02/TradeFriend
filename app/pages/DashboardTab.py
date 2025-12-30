@@ -3,8 +3,10 @@ import customtkinter as ctk
 from tkinter import messagebox
 from datetime import datetime, timedelta
 import os, json, logging
+import threading
 
 from core.trade_manager import TradeManager
+from utils.TradeFriendManager import TradeFriendManager
 
 # Placeholder imports (these will be resolved if 'core' and 'utils' are copied from old project)
 try:
@@ -25,6 +27,8 @@ class DashboardTab(ctk.CTkFrame):
         self.daily_refresh_done = False
         self.monitoring_active = False
         self.auto_refresh_active = True   # enabled by default
+
+        self.tradefriendtrader = TradeFriendManager()
 
         # ----------------- Layout -----------------
         self.pack(fill="both", expand=True, padx=10, pady=10)
@@ -78,6 +82,28 @@ class DashboardTab(ctk.CTkFrame):
 
         # Start auto-check loop
         self.after(1000, self.auto_daily_refresh_check)
+
+        # --- TradeFriend Controls ---
+        tf_box = ctk.CTkFrame(self)
+        tf_box.pack(fill="x", pady=8)
+
+        self.tf_scan_btn = ctk.CTkButton(
+            tf_box, text="Run TradeFriend Daily Scan",
+           command=self.tf_run_daily_scan
+        )
+        self.tf_scan_btn.pack(side="left", padx=10, pady=5)
+
+        self.tf_confirm_btn = ctk.CTkButton(
+            tf_box, text="Run Morning Confirmation",
+            command=self.tf_run_morning_confirm
+        )
+        self.tf_confirm_btn.pack(side="left", padx=10, pady=5)
+
+        self.tf_monitor_btn = ctk.CTkButton(
+            tf_box, text="Run Trade Monitor",
+            command=self.tf_run_monitor
+        )
+        self.tf_monitor_btn.pack(side="left", padx=10, pady=5)
 
     # ----------------- Control File Helpers -----------------
     def load_control(self):
@@ -228,3 +254,57 @@ class DashboardTab(ctk.CTkFrame):
                 self.status_label.configure(text="Status: Monitoring error")
             # Repeat every 5 minutes
             self.after(5 * 60 * 1000, self.monitor_loop)
+    
+    def tf_run_daily_scan(self):
+        def worker():   
+            try:
+                self.status_label.configure(
+                    text="Status: TradeFriend daily scan running..."
+                )
+                #self.update_idletasks()
+                logger.info(" TradeFriend daily scan started")
+                self.tradefriendtrader.tf_daily_scan()
+                logger.info(" TradeFriend daily scan completed")
+                self.status_label.configure(
+                    text="Status: TradeFriend daily scan complete"
+                )
+            except Exception as e:
+                messagebox.showerror("Error", f"Daily scan failed: {e}")
+                self.status_label.configure(text="Status: Daily scan error")
+        threading.Thread(target=worker, daemon=True).start()        
+
+
+    def tf_run_morning_confirm(self):
+            try:
+                self.status_label.configure(
+                    text="Status: TradeFriend morning confirmation running..."
+                )
+                self.update_idletasks()
+
+                CAPITAL = 100000
+                self.tradefriendtrader.tf_morning_confirm(capital=CAPITAL)
+
+                self.status_label.configure(
+                    text="Status: TradeFriend morning confirmation complete"
+                )
+            except Exception as e:
+                messagebox.showerror("Error", f"Morning confirmation failed: {e}")
+                self.status_label.configure(text="Status: Morning confirmation error")
+
+
+    def tf_run_monitor(self):
+            try:
+                self.status_label.configure(
+                    text="Status: TradeFriend monitoring running..."
+                )
+                self.update_idletasks()
+
+                self.tradefriendtrader.tf_monitor()
+
+                self.status_label.configure(
+                    text="Status: TradeFriend monitoring complete"
+                )
+            except Exception as e:
+                messagebox.showerror("Error", f"Monitoring failed: {e}")
+                self.status_label.configure(text="Status: Monitoring error")
+
