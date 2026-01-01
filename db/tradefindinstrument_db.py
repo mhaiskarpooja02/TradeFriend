@@ -86,6 +86,36 @@ class TradeFindDB:
     def _validate_symbol(self, symbol):
         return isinstance(symbol, str) and bool(VALID_SYMBOL_RE.match(symbol.strip()))
 
+    # ---------------------------------------------------
+    # resolve_active_symbol
+    # ---------------------------------------------------
+    def resolve_active_symbol(self, symbol):
+        """
+        Returns dict compatible with Angel broker:
+        {
+            exchange,
+            symbol,
+            token
+        }
+        """
+        self.cursor.execute("""
+            SELECT trading_symbol, token
+            FROM tradefindinstrument
+            WHERE symbol = ?
+              AND is_active = 1
+            LIMIT 1
+        """, (symbol,))
+    
+        row = self.cursor.fetchone()
+        if not row:
+            return None
+    
+        return {
+            "exchange": "NSE",              # hardcoded for equity
+            "symbol": row["trading_symbol"],
+            "token": row["token"]
+        }
+
 
     # ---------------------------------------------------
     # UPSERT (AUTO-REACTIVATE)

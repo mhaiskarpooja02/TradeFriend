@@ -11,7 +11,8 @@ from config.TradeFriendConfig import (
     PARTIAL_BOOK_PERCENT,
     SL_ON_CLOSE,
     PARTIAL_BOOK_RR,
-    HARD_EXIT_R_MULTIPLE
+    HARD_EXIT_R_MULTIPLE,
+    TRAIL_ATR_MULTIPLE
 )
 
 logger = get_logger(__name__)
@@ -54,11 +55,11 @@ class TradeFriendSwingTradeMonitor:
     # -------------------------------------------------
     # CORE TRADE MANAGEMENT LOGIC
     # -------------------------------------------------
-
     def _process_trade(self, trade):
         symbol = trade["symbol"]
         entry = float(trade["entry"])
         sl = float(trade["sl"])
+        trailing_sl = float(trade.get("trailing_sl") or sl)
         target = float(trade["target"])
         qty = int(trade["qty"])
         status = trade["status"]
@@ -76,51 +77,36 @@ class TradeFriendSwingTradeMonitor:
         today = date.today().isoformat()
 
         # -----------------------------
-        # 2️⃣ EMERGENCY HARD EXIT (gap / crash)
+        # 2️⃣ EMERGENCY HARD EXIT (GAP / CRASH)
         # -----------------------------
         if ltp <= entry - (risk * HARD_EXIT_R_MULTIPLE):
-            self.trade_repo.close_trade(
-                trade_id=trade["id"],
-                status="EMERGENCY_EXIT"
-            )
-            logger.warning(f" EMERGENCY EXIT | {symbol}")
+            self.trade_repo.close_trade(trade["id"], "EMERGENCY_EXIT")
             return
 
         # -----------------------------
-        # 3️⃣ STOP LOSS LOGIC (swing-safe)
+        # 3️⃣ STOP LOSS LOGIC (SWING SAFE)
         # -----------------------------
-        if ltp <= sl:
+        active_sl = max(sl, trailing_sl)
 
-            # ENTRY DAY → always immediate SL
+        if ltp <= active_sl:
+
+            # ENTRY DAY → IMMEDIATE SL
             if entry_day == today:
-                self.trade_repo.close_trade(
-                    trade_id=trade["id"],
-                    status="SL_HIT"
-                )
-                logger.info(f" SL HIT (ENTRY DAY) | {symbol}")
+                self.trade_repo.close_trade(trade["id"], "SL_HIT")
                 return
 
-            # HOLD MODE → close-based SL
+            # HOLD MODE → DAILY CLOSE SL
             if hold_mode == 1 and SL_ON_CLOSE:
-                candle_close = self.provider.get_last_close(symbol)
-                if candle_close < sl:
-                    self.trade_repo.close_trade(
-                        trade_id=trade["id"],
-                        status="SL_CLOSE_BASED"
-                    )
-                    logger.info(f" SL ON CLOSE | {symbol}")
+                daily_close = self.provider.get_last_close(symbol)
+                if daily_close < active_sl:
+                    self.trade_repo.close_trade(trade["id"], "SL_CLOSE_BASED")
                 return
 
-            # Normal SL
-            self.trade_repo.close_trade(
-                trade_id=trade["id"],
-                status="SL_HIT"
-            )
-            logger.info(f" SL HIT | {symbol}")
+            self.trade_repo.close_trade(trade["id"], "SL_HIT")
             return
 
         # -----------------------------
-        # 4️⃣ PARTIAL PROFIT @ 1R
+        # 4️⃣ PARTIAL PROFIT @ 1R (ONCE)
         # -----------------------------
         one_r_price = entry + (risk * PARTIAL_BOOK_RR)
 
@@ -133,23 +119,27 @@ class TradeFriendSwingTradeMonitor:
                     exit_price=one_r_price,
                     exit_qty=partial_qty
                 )
-
-                # Enable swing hold mode after partial
                 self.trade_repo.enable_hold_mode(trade["id"])
-
-                logger.info(
-                    f" PARTIAL BOOKED | {symbol} | "
-                    f"{partial_qty} @ {one_r_price}"
-                )
             return
 
         # -----------------------------
-        # 5️⃣ FINAL TARGET
+        # 5️⃣ TRAILING SL (AFTER PARTIAL)
+        # -----------------------------
+        if hold_mode == 1:
+            atr = self.provider.get_atr(symbol, period=14)
+            if atr:
+                new_trailing_sl = ltp - (atr * TRAIL_ATR_MULTIPLE)
+
+                # 🔒 TRAIL ONLY FORWARD
+                if new_trailing_sl > trailing_sl:
+                    self.trade_repo.update_sl(
+                        trade_id=trade["id"],
+                        new_sl=new_trailing_sl
+                    )
+
+        # -----------------------------
+        # 6️⃣ FINAL TARGET
         # -----------------------------
         if ltp >= target:
-            self.trade_repo.close_trade(
-                trade_id=trade["id"],
-                status="TARGET_HIT"
-            )
-            logger.info(f" TARGET HIT | {symbol}")
+            self.trade_repo.close_trade(trade["id"], "TARGET_HIT")
             return

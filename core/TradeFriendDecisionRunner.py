@@ -1,79 +1,82 @@
-import logging
-from core.TradeFriendDataProvider import TradeFriendDataProvider
-from db.TradeFriendWatchlistRepo import TradeFriendWatchlistRepo
-from core.TradeFriendDecisionEngine import TradeFriendDecisionEngine
-from core.TradeFriendPositionSizer import TradeFriendPositionSizer
-from strategy.TradeFriendEntry import TradeFriendEntry
-from strategy.TradeFriendScoring import TradeFriendScoring
-from db.TradeFriendTradeRepo import TradeFriendTradeRepo
-from db.TradeFriendDatabase import TradeFriendDatabase
+# core/TradeFriendDecisionRunner.py
 
-logger = logging.getLogger(__name__)
+import time
+from utils.logger import get_logger
+from core.TradeFriendDataProvider import TradeFriendDataProvider
+from db.TradeFriendSwingPlanRepo import TradeFriendSwingPlanRepo
+from db.TradeFriendTradeRepo import TradeFriendTradeRepo
+from core.TradeFriendPositionSizer import TradeFriendPositionSizer
+from config.TradeFriendConfig import REQUEST_DELAY_SEC
+
+logger = get_logger(__name__)
 
 
 class TradeFriendDecisionRunner:
     """
     PURPOSE:
-    - Morning execution engine
-    - Confirms trades after first 15-min candle
+    - Convert PLANNED swing plans into OPEN trades
     """
 
-    def __init__(self, capital):
-        self.capital = capital
-
-        self.db = TradeFriendDatabase()
+    def __init__(self):
+        self.plan_repo = TradeFriendSwingPlanRepo()
+        self.trade_repo = TradeFriendTradeRepo()
         self.provider = TradeFriendDataProvider()
+        self.position_sizer = TradeFriendPositionSizer()
 
-        self.watchlist_repo = TradeFriendWatchlistRepo(self.db)
-        self.trade_repo = TradeFriendTradeRepo(self.db)
+    def run(self, capital: float):
+        logger.info("🚀 Morning confirmation started")
 
-        self.scorer = TradeFriendScoring()
-        self.sizer = TradeFriendPositionSizer()
-
-        self.decision_engine = TradeFriendDecisionEngine(
-            scorer=self.scorer,
-            sizer=self.sizer,
-            trade_repo=self.trade_repo
-        )
-
-    def run(self):
-        logger.info("🚀 Decision Runner started")
-
-        watchlist = self.watchlist_repo.fetch_all()
-        if not watchlist:
-            logger.info("No watchlist symbols to evaluate")
+        plans = self.plan_repo.fetch_active_plans()
+        if not plans:
+            logger.info("No planned trades found")
             return
 
-        for row in watchlist:
-            symbol = row["symbol"]
-
+        for plan in plans:
             try:
-                # 1️⃣ Fetch 15-min data
-                df = self.provider.get_intraday_data(symbol, interval="15m")
-
-                if df is None or df.empty or len(df) < 20:
-                    continue
-
-                # 2️⃣ Entry confirmation
-                entry_strategy = TradeFriendEntry(df, symbol)
-                signal = entry_strategy.confirm_entry()
-
-                if not signal:
-                    continue
-
-                # 3️⃣ Final decision
-                trade = self.decision_engine.evaluate(
-                    df=df,
-                    signal=signal,
-                    capital=self.capital
-                )
-
-                if trade:
-                    logger.info(
-                        f"✅ TRADE CONFIRMED {symbol} | Qty {trade['qty']} | Confidence {trade['confidence']}"
-                    )
-
+                self._process_plan(plan, capital)
+                time.sleep(REQUEST_DELAY_SEC)
             except Exception as e:
-                logger.exception(f"Decision failed for {symbol}: {e}")
+                logger.exception(f"Decision failed for {plan['symbol']}: {e}")
 
-        logger.info("✅ Decision Runner completed")
+        logger.info("✅ Morning confirmation completed")
+
+    def _process_plan(self, plan, capital):
+        symbol = plan["symbol"]
+        entry = float(plan["entry"])
+        sl = float(plan["sl"])
+
+        logger.info(f"Checking trigger → {symbol}")
+
+        ltp = self.provider.get_ltp(symbol)
+        if ltp is None:
+            logger.warning(f"{symbol} → LTP not available")
+            return
+
+        # 🔔 ENTRY TRIGGER
+        if ltp < entry:
+            logger.info(f"{symbol} → Entry not triggered")
+            return
+
+        qty = self.position_sizer.calculate_qty(
+            capital=capital,
+            entry=entry,
+            sl=sl
+        )
+
+        if qty <= 0:
+            logger.warning(f"{symbol} → Qty zero")
+            return
+
+        trade = {
+            "symbol": symbol,
+            "entry": entry,
+            "sl": sl,
+            "target1": plan["target1"],
+            "qty": qty,
+            "confidence": 1
+        }
+
+        self.trade_repo.save_trade(trade)
+        self.plan_repo.mark_triggered(plan["id"])
+
+        logger.info(f"✅ Trade CREATED → {symbol} | Qty={qty}")

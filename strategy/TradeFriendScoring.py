@@ -1,20 +1,34 @@
 class TradeFriendScoring:
     """
     PURPOSE:
-    - Score quality of trade (0–10)
+    - Assign confidence score to a swing setup
+    - Used for analytics, ranking, dashboards
     """
 
-    def score(self, df):
-        score = 0
-        last = df.iloc[-1]
+    def score(self, signal: dict) -> float:
+        """
+        signal keys expected:
+        - rr
+        - trend_strength
+        - volume_confirmed
+        """
 
-        if last.get("rsi", 0) > 60:
-            score += 2
-        if last["close"] > last.get("ema_50", last["close"]):
-            score += 2
-        if last["volume"] > df["volume"].rolling(20).mean().iloc[-1]:
-            score += 2
-        if last.get("adx", 0) > 20:
-            score += 2
+        score = 0.0
 
-        return score
+        rr = signal.get("rr", 0)
+        if rr >= 3:
+            score += 0.4
+        elif rr >= 2:
+            score += 0.3
+        elif rr >= 1.5:
+            score += 0.2
+
+        if signal.get("trend_strength") == "STRONG":
+            score += 0.3
+        elif signal.get("trend_strength") == "MODERATE":
+            score += 0.2
+
+        if signal.get("volume_confirmed"):
+            score += 0.3
+
+        return round(min(score, 1.0), 2)

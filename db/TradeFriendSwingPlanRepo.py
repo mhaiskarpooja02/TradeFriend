@@ -1,4 +1,11 @@
-# db/TradeFriendSwingPlanRepo.py
+import sqlite3
+import os
+
+DB_FOLDER = "dbdata"
+DB_FILE = os.path.join(DB_FOLDER, "tradefriend_algo.db")
+
+os.makedirs(DB_FOLDER, exist_ok=True)
+
 
 class TradeFriendSwingPlanRepo:
     """
@@ -7,20 +14,40 @@ class TradeFriendSwingPlanRepo:
     - Manage lifecycle (PLANNED → TRIGGERED / EXPIRED)
     """
 
-    def __init__(self, db):
-        self.db = db
+    def __init__(self):
+        self.conn = sqlite3.connect(
+            DB_FILE,
+            check_same_thread=False
+        )
+        self.conn.row_factory = sqlite3.Row
+        self._create_table()
+
+    # -----------------------------
+    # ENSURE TABLE
+    # -----------------------------
+    def _create_table(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS swing_trade_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                strategy TEXT,
+                entry REAL NOT NULL,
+                sl REAL NOT NULL,
+                target1 REAL NOT NULL,
+                rr REAL,
+                status TEXT DEFAULT 'PLANNED',
+                expiry_date TEXT,
+                created_on TEXT,
+                triggered_on TEXT
+            )
+        """)
+        self.conn.commit()
 
     # -----------------------------
     # SAVE NEW PLAN
     # -----------------------------
     def save_plan(self, plan: dict):
-        """
-        plan = {
-            symbol, strategy, entry, sl, target1,
-            rr, expiry_date
-        }
-        """
-        self.db.execute("""
+        self.conn.execute("""
             INSERT INTO swing_trade_plans
             (symbol, strategy, entry, sl, target1, rr,
              status, expiry_date, created_on)
@@ -34,51 +61,51 @@ class TradeFriendSwingPlanRepo:
             plan.get("rr"),
             plan["expiry_date"]
         ))
+        self.conn.commit()
 
     # -----------------------------
     # FETCH ACTIVE PLANS
     # -----------------------------
     def fetch_active_plans(self):
-        """
-        Used by LTP monitor
-        """
-        return self.db.fetchall("""
+        cursor = self.conn.execute("""
             SELECT *
             FROM swing_trade_plans
             WHERE status = 'PLANNED'
+            ORDER BY created_on DESC
         """)
+        return cursor.fetchall()
 
     # -----------------------------
     # MARK PLAN AS TRIGGERED
     # -----------------------------
     def mark_triggered(self, plan_id):
-        self.db.execute("""
+        self.conn.execute("""
             UPDATE swing_trade_plans
             SET status = 'TRIGGERED',
                 triggered_on = datetime('now')
             WHERE id = ?
         """, (plan_id,))
+        self.conn.commit()
 
     # -----------------------------
     # EXPIRE OLD PLANS
     # -----------------------------
     def expire_old_plans(self):
-        """
-        Run daily before market open
-        """
-        self.db.execute("""
+        self.conn.execute("""
             UPDATE swing_trade_plans
             SET status = 'EXPIRED'
             WHERE status = 'PLANNED'
               AND date(expiry_date) < date('now')
         """)
+        self.conn.commit()
 
     # -----------------------------
     # CANCEL PLAN (MANUAL)
     # -----------------------------
     def cancel_plan(self, plan_id):
-        self.db.execute("""
+        self.conn.execute("""
             UPDATE swing_trade_plans
             SET status = 'CANCELLED'
             WHERE id = ?
         """, (plan_id,))
+        self.conn.commit()

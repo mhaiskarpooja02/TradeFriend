@@ -1,67 +1,88 @@
-import talib
+import pandas as pd
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TradeFriendSwingEntryPlanner:
     """
     PURPOSE:
-    - Create swing trade PLAN (not execution)
-    - Uses DAILY timeframe only
+    - Convert a valid swing signal into a concrete trade plan
+    - Pure logic class (NO DB, NO API)
     """
 
-    def __init__(self, df, symbol, strategy):
-        self.df = df.copy()
+    def __init__(self, df: pd.DataFrame, symbol: str, strategy: str):
+        self.df = df
         self.symbol = symbol
         self.strategy = strategy
 
+    # --------------------------------------------------
+    # PUBLIC API
+    # --------------------------------------------------
+
     def build_plan(self):
-        df = self.df
+        """
+        Returns a swing trade plan dict or None
+        """
 
-        # ---------------- SAFETY CHECKS ----------------
-        if df is None or df.empty or len(df) < 60:
+        try:
+            entry = self._calculate_entry()
+            sl = self._calculate_sl(entry)
+            target = self._calculate_target(entry, sl)
+
+            if not self._is_valid_rr(entry, sl, target):
+                logger.info(
+                    f"{self.symbol} → RR not acceptable"
+                )
+                return None
+
+            plan = {
+                "symbol": self.symbol,
+                "strategy": self.strategy,
+                "entry": round(entry, 2),
+                "sl": round(sl, 2),
+                "target1": round(target, 2),
+                "rr": round((target - entry) / (entry - sl), 2),
+                "expiry_date": self._expiry_date()
+            }
+
+            return plan
+
+        except Exception as e:
+            logger.exception(
+                f"Swing plan build failed for {self.symbol}: {e}"
+            )
             return None
 
-        close = df["close"].astype(float)
-        low = df["low"].astype(float)
+    # --------------------------------------------------
+    # INTERNAL CALCULATIONS
+    # --------------------------------------------------
 
-        # ---------------- INDICATORS ----------------
-        df["ema_20"] = talib.EMA(close, timeperiod=20)
-        df["ema_50"] = talib.EMA(close, timeperiod=50)
-        df["atr"] = talib.ATR(
-            df["high"], df["low"], close, timeperiod=14
-        )
+    def _calculate_entry(self):
+        """
+        Default: next candle breakout above previous high
+        """
+        last = self.df.iloc[-1]
+        return float(last["high"])
 
-        last = df.iloc[-1]
+    def _calculate_sl(self, entry):
+        """
+        Default: recent swing low
+        """
+        recent_lows = self.df["low"].tail(5)
+        return float(recent_lows.min())
 
-        # ---------------- TREND FILTER ----------------
-        if last["close"] < last["ema_50"]:
-            return None
-
-        # ---------------- ENTRY LOGIC ----------------
-        entry = round(last["close"], 2)
-
-        # Stoploss: ATR based (swing safe)
-        sl = round(entry - (last["atr"] * 1.5), 2)
-
-        if sl >= entry:
-            return None
-
-        # Target: Fixed RR = 1:2
+    def _calculate_target(self, entry, sl):
+        """
+        Default: 1:2 RR
+        """
         risk = entry - sl
-        target1 = round(entry + (risk * 2), 2)
+        return entry + (2 * risk)
 
-        rr = round((target1 - entry) / risk, 2)
+    def _is_valid_rr(self, entry, sl, target, min_rr=1.5):
+        rr = (target - entry) / (entry - sl)
+        return rr >= min_rr
 
-        # ---------------- EXPIRY LOGIC ----------------
-        expiry_date = (datetime.now() + timedelta(days=7)).date()
-
-        # ---------------- FINAL PLAN ----------------
-        return {
-            "symbol": self.symbol,
-            "strategy": self.strategy,
-            "entry": entry,
-            "sl": sl,
-            "target1": target1,
-            "rr": rr,
-            "expiry_date": expiry_date.isoformat()
-        }
+    def _expiry_date(self, days=7):
+        return (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
