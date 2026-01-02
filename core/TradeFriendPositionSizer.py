@@ -1,35 +1,25 @@
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
 
-
 class TradeFriendPositionSizer:
     """
     PURPOSE:
-    - Centralized position sizing logic
-    - Reads capital & risk from settings DB
+    - Calculate position size based on capital & risk
+    - Uses TradeFriendSettingsRepo (single source of truth)
     - NO API
-    - NO UI
+    - NO DB writes
     """
 
     def __init__(self):
-        """
-        Loads settings automatically
-        """
+        # Centralized settings
         self.settings = TradeFriendSettingsRepo()
 
-    # -------------------------------------------------
-    # CORE RISK-BASED POSITION SIZE
-    # -------------------------------------------------
+    # --------------------------------------------------
+    # CORE POSITION SIZING
+    # --------------------------------------------------
     def calculate(self, entry: float, sl: float) -> dict:
         """
-        Calculate position sizing based on risk %
-
-        Returns:
-        {
-            qty,
-            risk_amount,
-            per_unit_risk,
-            position_value
-        }
+        Calculate qty using:
+        Qty = (capital * risk%) / |entry - sl|
         """
 
         if entry <= 0 or sl <= 0:
@@ -37,32 +27,34 @@ class TradeFriendPositionSizer:
 
         per_unit_risk = abs(entry - sl)
         if per_unit_risk == 0:
-            raise ValueError("Entry and SL cannot be the same")
+            raise ValueError("Entry and SL cannot be same")
 
-        capital = self.settings.capital()
-        risk_pct = self.settings.risk_percent()
+        capital = self.settings.capital()          # ✅ function
+        risk_pct = self.settings.risk_percent()    # ✅ function
 
-        risk_amount = (capital * risk_pct) / 100.0
+        risk_amount = capital * (risk_pct / 100.0)
+
         qty = int(risk_amount / per_unit_risk)
-
         if qty <= 0:
             raise ValueError("Calculated quantity is zero")
 
         position_value = qty * entry
 
         return {
-            "qty": qty,
+            "capital": round(capital, 2),
+            "risk_percent": risk_pct,
             "risk_amount": round(risk_amount, 2),
             "per_unit_risk": round(per_unit_risk, 2),
-            "position_value": round(position_value, 2),
+            "qty": qty,
+            "position_value": round(position_value, 2)
         }
 
-    # -------------------------------------------------
-    # SAFE QTY ONLY (FOR QUICK CHECKS)
-    # -------------------------------------------------
+    # --------------------------------------------------
+    # LIGHTWEIGHT QTY ONLY (SAFE)
+    # --------------------------------------------------
     def calculate_qty(self, entry: float, sl: float) -> int:
         """
-        Lightweight qty calculation
+        Returns qty only (no exception)
         """
 
         if entry <= 0 or sl <= 0:

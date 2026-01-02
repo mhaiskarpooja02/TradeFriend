@@ -96,3 +96,9 @@ class TradeFriendSettingsRepo:
 
         # sort by price ascending
         return sorted(rules, key=lambda x: x[0])
+
+    def capital(self) -> float:
+     return float(self.get("capital", float))
+
+    def risk_percent(self) -> float:
+        return float(self.get("risk_percent", float))
