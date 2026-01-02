@@ -63,6 +63,22 @@ class TradeFriendDecisionRunner:
             sl=sl
         )
 
+        # ===============================
+        # 🎯 TARGET CALCULATION (FIX)
+        # ===============================
+        if "target" in plan:
+            target = float(plan["target"])
+        elif "target1" in plan:
+            target = float(plan["target1"])
+        elif "rr" in plan:
+            rr = float(plan["rr"])
+            target = entry + (entry - sl) * rr
+        else:
+            # Default RR = 2
+            target = entry + (entry - sl) * 2
+
+        target = round(target, 2)
+
         if qty <= 0:
             logger.warning(f"{symbol} → Qty zero")
             return
@@ -71,7 +87,7 @@ class TradeFriendDecisionRunner:
             "symbol": symbol,
             "entry": entry,
             "sl": sl,
-            "target1": plan["target1"],
+            "target": target,
             "qty": qty,
             "confidence": 1
         }

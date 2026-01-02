@@ -1,6 +1,6 @@
 import pandas as pd
 from datetime import datetime, timedelta
-from brokers.angel_client import AngelClient
+from brokers.angel_client import AngelClient, getltp
 from utils.symbol_resolver import SymbolResolver
 from utils.logger import get_logger
 
@@ -10,6 +10,7 @@ logger = get_logger(__name__)
 class TradeFriendDataProvider:
     def __init__(self):
         self.broker = AngelClient()
+         # Initialize available brokers (best-effort)
         if getattr(self.broker, "smart_api", None) is None:
             raise Exception("Broker login failed")
 
@@ -137,7 +138,10 @@ class TradeFriendDataProvider:
         }
         """
         try:
-            data = self.broker.get_ltp(resolved_symbol)
+            logger.warning(f"Calling get ltp {resolved_symbol}")
+            resolved = self.resolver.resolve_symbol(resolved_symbol)
+            logger.warning(f"Calling get ltp {resolved_symbol}")
+            data = getltp(resolved)
             return data
         except Exception as e:
             logger.error(
