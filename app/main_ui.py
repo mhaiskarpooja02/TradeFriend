@@ -14,6 +14,7 @@ from app.pages.TradeSetupTab import TradeSetupTab
 from app.pages.HoldingsTab import HoldingsTab
 from app.pages.TokenManagerPage import TokenManagerPage
 from app.config_popups.BrokerConfigPopup import BrokerConfigPopup
+from app.pages.TradeFriendSettingsPopup import TradeFriendSettingsPopup
 
 def run_app():
     ctk.set_appearance_mode("dark")
@@ -24,15 +25,16 @@ def run_app():
     root.geometry("1200x750")
 
     # Top header
-    header = ctk.CTkFrame(root, height=52)
+    header = ctk.CTkFrame(root, height=56)
     header.pack(fill="x", side="top")
+    header.pack_propagate(False)      
 
     title_lbl = ctk.CTkLabel(header, text="TradeMadeEasy", font=("Arial", 18, "bold"))
     title_lbl.pack(side="left", padx=12)
 
     # Right side of header - theme selector + config icon
     header_right = ctk.CTkFrame(header, fg_color="transparent")
-    header_right.pack(side="right", padx=12)
+    header_right.pack(side="right", padx=12, pady=8)
 
     def on_theme_change(value):
         # value expected 'Dark' or 'Light'
@@ -45,12 +47,49 @@ def run_app():
     theme_combo.set("Dark")
     theme_combo.pack(side="left", padx=(0,8))
 
-    def open_config():
-        # open broker config popup
+    
+    # ---------- Theme Toggle ----------
+    def on_theme_change(value):
+        ctk.set_appearance_mode("dark" if value == "Dark" else "light")
+
+    theme_combo = ctk.CTkComboBox(
+        header_right,
+        values=["Dark", "Light"],
+        width=120,
+        command=on_theme_change
+    )
+    theme_combo.set("Dark")
+    theme_combo.pack(side="left", padx=(0, 8))
+
+    # ---------- Trade Settings ----------
+    def open_trade_settings():
+        TradeFriendSettingsPopup(root)
+
+    trade_settings_btn = ctk.CTkButton(
+        header_right,
+        text="💼",
+        width=36,
+        height=36,
+        fg_color="#2b2b2b",
+        hover_color="#3a3a3a",
+        command=open_trade_settings
+    )
+    trade_settings_btn.pack(side="left", padx=(0, 4))
+
+    # ---------- Broker Config ----------
+    def open_broker_config():
         BrokerConfigPopup(root)
 
-    cfg_btn = ctk.CTkButton(header_right, text="⚙️", width=36, height=36, command=open_config)
-    cfg_btn.pack(side="left", padx=(4,0))
+    broker_config_btn = ctk.CTkButton(
+        header_right,
+        text="⚙️",
+        width=36,
+        height=36,
+        fg_color="#2b2b2b",
+        hover_color="#3a3a3a",
+        command=open_broker_config
+    )
+    broker_config_btn.pack(side="left")
 
     # Main layout frames
     content = ctk.CTkFrame(root)

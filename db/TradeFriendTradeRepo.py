@@ -2,6 +2,7 @@ import sqlite3
 import os
 from datetime import datetime, date
 
+
 DB_FOLDER = "dbdata"
 DB_FILE = os.path.join(DB_FOLDER, "tradefriend_trades.db")
 os.makedirs(DB_FOLDER, exist_ok=True)
@@ -9,7 +10,10 @@ os.makedirs(DB_FOLDER, exist_ok=True)
 
 class TradeFriendTradeRepo:
     """
-    Persist and manage swing trades
+    PURPOSE:
+    - Persist swing trades
+    - Provide exposure stats to RiskManager
+    - Serve dashboard & lifecycle operations
     """
 
     def __init__(self):
@@ -20,9 +24,9 @@ class TradeFriendTradeRepo:
         self._ensure_table()
         self._ensure_columns()
 
-    # -----------------------------
-    # TABLE
-    # -----------------------------
+    # -------------------------------------------------
+    # TABLE & MIGRATION
+    # -------------------------------------------------
     def _ensure_table(self):
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS tradefriend_trades (
@@ -37,6 +41,9 @@ class TradeFriendTradeRepo:
                 qty INTEGER NOT NULL,
                 initial_qty INTEGER,
 
+                position_value REAL,
+                risk_amount REAL,
+
                 confidence REAL DEFAULT 0,
                 status TEXT DEFAULT 'OPEN',
 
@@ -50,10 +57,13 @@ class TradeFriendTradeRepo:
         self.conn.commit()
 
     def _ensure_columns(self):
+        self._add_column("position_value", "REAL")
+        self._add_column("risk_amount", "REAL")
         self._add_column("trailing_sl", "REAL")
         self._add_column("initial_qty", "INTEGER")
         self._add_column("hold_mode", "INTEGER DEFAULT 0")
         self._add_column("entry_day", "TEXT")
+        self._add_column("closed_on", "TEXT")
 
     def _add_column(self, column, col_type):
         try:
@@ -62,43 +72,67 @@ class TradeFriendTradeRepo:
             )
             self.conn.commit()
         except sqlite3.OperationalError:
-            pass
+            pass  # Column already exists
 
-    # -----------------------------
-    # CREATE TRADE (ENTRY TRIGGERED)
-    # -----------------------------
+    # -------------------------------------------------
+    # CREATE TRADE (DecisionEngine ENTRY)
+    # -------------------------------------------------
     def save_trade(self, trade: dict):
         """
-        trade = {
-            symbol, entry, sl, target, qty, confidence
-        }
+        trade MUST contain:
+        symbol, entry, sl, target, qty,
+        position_value, confidence
         """
+
         self.cursor.execute("""
             INSERT INTO tradefriend_trades (
                 symbol, entry, sl, trailing_sl,
                 target, qty, initial_qty,
+                position_value, risk_amount,
                 confidence, status,
                 hold_mode, entry_day,
                 created_on
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?, ?)
         """, (
             trade["symbol"],
             trade["entry"],
             trade["sl"],
-            trade["sl"],
+            trade["sl"],                 # trailing_sl starts same as SL
             trade["target"],
             trade["qty"],
-            trade["qty"],
-            trade.get("confidence", 1.0),
+            trade["qty"],                # initial_qty
+            trade.get("position_value"),
+            trade.get("risk_amount"),
+            trade.get("confidence", 0),
             date.today().isoformat(),
             datetime.now().isoformat()
         ))
+
         self.conn.commit()
 
-    # -----------------------------
-    # FETCH OPEN TRADES
-    # -----------------------------
+    # -------------------------------------------------
+    # RISK MANAGER SUPPORT
+    # -------------------------------------------------
+    def count_open_trades(self) -> int:
+        cur = self.cursor.execute("""
+            SELECT COUNT(*)
+            FROM tradefriend_trades
+            WHERE status = 'OPEN'
+        """)
+        return cur.fetchone()[0]
+
+    def sum_open_position_value(self) -> float:
+        cur = self.cursor.execute("""
+            SELECT COALESCE(SUM(position_value), 0)
+            FROM tradefriend_trades
+            WHERE status = 'OPEN'
+        """)
+        return float(cur.fetchone()[0])
+
+    # -------------------------------------------------
+    # FETCH
+    # -------------------------------------------------
     def fetch_open_trades(self):
         self.cursor.execute("""
             SELECT *
@@ -107,18 +141,27 @@ class TradeFriendTradeRepo:
         """)
         return self.cursor.fetchall()
 
-    # -----------------------------
+    # -------------------------------------------------
     # PARTIAL EXIT
-    # -----------------------------
-    def partial_exit(self, trade_id, exit_qty):
+    # -------------------------------------------------
+    def partial_exit(self, trade_id: int, exit_qty: int):
+        """
+        Reduce quantity safely and mark trade PARTIAL
+        """
         self.cursor.execute("""
             UPDATE tradefriend_trades
-            SET qty = qty - ?, status = 'PARTIAL'
+            SET 
+                qty = qty - ?,
+                status = 'PARTIAL'
             WHERE id = ?
-        """, (exit_qty, trade_id))
+              AND qty > ?
+        """, (exit_qty, trade_id, exit_qty))
         self.conn.commit()
 
-    def enable_hold_mode(self, trade_id):
+    # -------------------------------------------------
+    # HOLD MODE
+    # -------------------------------------------------
+    def enable_hold_mode(self, trade_id: int):
         self.cursor.execute("""
             UPDATE tradefriend_trades
             SET hold_mode = 1
@@ -126,26 +169,43 @@ class TradeFriendTradeRepo:
         """, (trade_id,))
         self.conn.commit()
 
-    def update_sl(self, trade_id, new_sl):
+    # -------------------------------------------------
+    # SL / TRAILING SL
+    # -------------------------------------------------
+    def update_sl(self, trade_id: int, new_sl: float):
         self.cursor.execute("""
             UPDATE tradefriend_trades
-            SET sl = ?, trailing_sl = ?
+            SET 
+                sl = ?,
+                trailing_sl = ?
             WHERE id = ?
         """, (new_sl, new_sl, trade_id))
         self.conn.commit()
 
-    def close_trade(self, trade_id, status):
+    # -------------------------------------------------
+    # CLOSE TRADE
+    # -------------------------------------------------
+    def close_trade(self, trade_id: int, status: str):
+        """
+        status examples:
+        CLOSED / SL / TARGET / MANUAL
+        """
         self.cursor.execute("""
             UPDATE tradefriend_trades
-            SET status = ?, closed_on = ?
+            SET 
+                status = ?,
+                closed_on = ?
             WHERE id = ?
         """, (status, datetime.now().isoformat(), trade_id))
         self.conn.commit()
 
-    # -----------------------------
+    # -------------------------------------------------
     # DASHBOARD
-    # -----------------------------
-    def fetch_recent_with_pnl(self, limit=50):
+    # -------------------------------------------------
+    def fetch_recent_with_pnl(self, limit: int = 50):
+        """
+        PnL should be derived in UI layer
+        """
         self.cursor.execute("""
             SELECT *
             FROM tradefriend_trades

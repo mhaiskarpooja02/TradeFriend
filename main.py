@@ -15,6 +15,7 @@ from app.pages.HoldingsTab import HoldingsTab
 from app.pages.TokenManagerPage import TokenManagerPage
 from app.pages.DashboardTab import DashboardTab
 from app.pages.TradeAnalysisTab import TradeAnalysisTab
+from app.pages.TradeFriendSettingsPopup import TradeFriendSettingsPopup
 # -----------------------------
 # Page Imports (your classes)
 # -----------------------------
@@ -52,6 +53,16 @@ class TradeMadeEasyApp(tb.Window):
         )
         self.theme_menu.pack(side=RIGHT, padx=10)
         self.theme_menu.bind("<<ComboboxSelected>>", self.change_theme)
+
+        # Trade settings button
+        self.trade_settings_button = tb.Button(
+            self.header_frame,
+            text="💼 Trade Settings",
+            bootstyle=INFO,
+            command=self.open_trade_settings
+        )
+        self.trade_settings_button.pack(side=RIGHT, padx=5)
+
 
         # Config button
         self.config_button = tb.Button(
@@ -126,6 +137,20 @@ class TradeMadeEasyApp(tb.Window):
             self.style.theme_use(selected)
         except Exception as e:
             messagebox.showerror("Theme Error", f"Failed to apply theme: {e}")
+
+    # -----------------------------
+    # Trade settings page
+    # -----------------------------
+    def open_trade_settings(self):
+        """Open the TradeFriend settings popup"""
+        try:
+            TradeFriendSettingsPopup(self)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                f"Failed to open trade settings window:\n{e}"
+            )
+
 
     # -----------------------------
     # Config page placeholder

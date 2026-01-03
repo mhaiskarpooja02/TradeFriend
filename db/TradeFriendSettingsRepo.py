@@ -1,104 +1,89 @@
 import sqlite3
-import os
-
-DB_FOLDER = "dbdata"
-DB_FILE = os.path.join(DB_FOLDER, "tradefriend_settings.db")
-os.makedirs(DB_FOLDER, exist_ok=True)
+from pathlib import Path
 
 
 class TradeFriendSettingsRepo:
     """
-    PURPOSE:
-    - Store configurable trading settings
-    - Single source of truth
+    Central settings repository for TradeFriend
+    Uses AMOUNT-based capital configuration (no percentages except risk)
     """
 
+    DB_PATH = Path("tradefriend.db")
+
+    DEFAULTS = {
+        "total_capital": 1000000,
+        "swing_capital": 300000,
+        "max_active_capital": 200000,
+        "per_trade_cap": 40000,
+        "risk_percent": 1.0,
+        "max_open_trades": 5,
+    }
+
     def __init__(self):
-        self.conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        self.conn = sqlite3.connect(self.DB_PATH)
         self.conn.row_factory = sqlite3.Row
-        self.cursor = self.conn.cursor()
         self._create_table()
         self._ensure_defaults()
 
+    # -------------------------------------------------
+    # DB
+    # -------------------------------------------------
     def _create_table(self):
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS tradefriend_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
         """)
         self.conn.commit()
 
     def _ensure_defaults(self):
-        defaults = {
-            "SWING_CAPITAL": "100000",
-            "RISK_PERCENT": "1.0",
-            "MAX_OPEN_TRADES": "5",
-            "MAX_CAPITAL_UTILIZATION": "0.6",
+        for k, v in self.DEFAULTS.items():
+            if self.get(k) is None:
+                self.set(k, v)
 
-            # qty slab rules (JSON-like string for now)
-            "QTY_RULES": "500:10,1000:5,3000:2,5000:1,10000:1"
-        }
-
-        for k, v in defaults.items():
-            self.cursor.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-                (k, v)
-            )
-        self.conn.commit()
-
-    # ----------------------------
-    # Public API
-    # ----------------------------
-
-    def get(self, key, default=None):
-        self.cursor.execute(
-            "SELECT value FROM settings WHERE key = ?",
+    # -------------------------------------------------
+    # API
+    # -------------------------------------------------
+    def get(self, key):
+        cur = self.conn.execute(
+            "SELECT value FROM tradefriend_settings WHERE key = ?",
             (key,)
         )
-        row = self.cursor.fetchone()
-        return row["value"] if row else default
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        val = row["value"]
+        if "." in val:
+            return float(val)
+        return int(val)
 
     def set(self, key, value):
-        self.cursor.execute("""
-            INSERT INTO settings (key, value)
-            VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        self.conn.execute("""
+        INSERT INTO tradefriend_settings(key, value)
+        VALUES(?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
         """, (key, str(value)))
         self.conn.commit()
 
-    def get_float(self, key, default=0.0):
-        try:
-            return float(self.get(key, default))
-        except Exception:
-            return default
+    # -------------------------------------------------
+    # Convenience Getters (OPTIONAL but clean)
+    # -------------------------------------------------
+    def total_capital(self):
+        return self.get("total_capital")
 
-    def get_int(self, key, default=0):
-        try:
-            return int(self.get(key, default))
-        except Exception:
-            return default
+    def swing_capital(self):
+        return self.get("swing_capital")
 
-    def get_qty_rules(self):
-        """
-        Example stored:
-        500:10,1000:5,3000:2,5000:1
-        """
-        raw = self.get("QTY_RULES", "")
-        rules = []
+    def max_active_capital(self):
+        return self.get("max_active_capital")
 
-        for part in raw.split(","):
-            try:
-                price, qty = part.split(":")
-                rules.append((float(price), int(qty)))
-            except Exception:
-                pass
+    def per_trade_cap(self):
+        return self.get("per_trade_cap")
 
-        # sort by price ascending
-        return sorted(rules, key=lambda x: x[0])
+    def risk_percent(self):
+        return self.get("risk_percent")
 
-    def capital(self) -> float:
-     return float(self.get("capital", float))
-
-    def risk_percent(self) -> float:
-        return float(self.get("risk_percent", float))
+    def max_open_trades(self):
+        return self.get("max_open_trades")

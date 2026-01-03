@@ -1,73 +1,51 @@
+# core/TradeFriendPositionSizer.py
+
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
+
 
 class TradeFriendPositionSizer:
     """
-    PURPOSE:
-    - Calculate position size based on capital & risk
-    - Uses TradeFriendSettingsRepo (single source of truth)
-    - NO API
-    - NO DB writes
+    Calculates position size using absolute capital rules
     """
 
     def __init__(self):
-        # Centralized settings
         self.settings = TradeFriendSettingsRepo()
 
-    # --------------------------------------------------
-    # CORE POSITION SIZING
-    # --------------------------------------------------
     def calculate(self, entry: float, sl: float) -> dict:
-        """
-        Calculate qty using:
-        Qty = (capital * risk%) / |entry - sl|
-        """
-
         if entry <= 0 or sl <= 0:
-            raise ValueError("Entry and SL must be positive")
+            raise ValueError("Invalid price")
 
         per_unit_risk = abs(entry - sl)
         if per_unit_risk == 0:
             raise ValueError("Entry and SL cannot be same")
 
-        capital = self.settings.capital()          # ✅ function
-        risk_pct = self.settings.risk_percent()    # ✅ function
+        total_capital = self.settings.get("total_capital", float)
+        swing_capital = self.settings.get("swing_capital_amount", float)
+        per_trade_cap = self.settings.get("per_trade_capital_amount", float)
+        risk_amount = self.settings.get("risk_amount_per_trade", float)
 
-        risk_amount = capital * (risk_pct / 100.0)
+        # 🔒 Capital guards
+        allowed_capital = min(per_trade_cap, swing_capital)
 
-        qty = int(risk_amount / per_unit_risk)
+        qty_risk_based = int(risk_amount / per_unit_risk)
+        qty_cap_based = int(allowed_capital / entry)
+
+        qty = min(qty_risk_based, qty_cap_based)
+
         if qty <= 0:
-            raise ValueError("Calculated quantity is zero")
-
-        position_value = qty * entry
+            raise ValueError("Quantity resolved to zero")
 
         return {
-            "capital": round(capital, 2),
-            "risk_percent": risk_pct,
-            "risk_amount": round(risk_amount, 2),
-            "per_unit_risk": round(per_unit_risk, 2),
             "qty": qty,
-            "position_value": round(position_value, 2)
+            "entry": entry,
+            "sl": sl,
+            "risk_amount": risk_amount,
+            "position_value": round(qty * entry, 2),
+            "per_unit_risk": round(per_unit_risk, 2)
         }
 
-    # --------------------------------------------------
-    # LIGHTWEIGHT QTY ONLY (SAFE)
-    # --------------------------------------------------
     def calculate_qty(self, entry: float, sl: float) -> int:
-        """
-        Returns qty only (no exception)
-        """
-
-        if entry <= 0 or sl <= 0:
+        try:
+            return self.calculate(entry, sl)["qty"]
+        except Exception:
             return 0
-
-        per_unit_risk = abs(entry - sl)
-        if per_unit_risk == 0:
-            return 0
-
-        capital = self.settings.capital()
-        risk_pct = self.settings.risk_percent()
-
-        risk_amount = capital * (risk_pct / 100.0)
-        qty = int(risk_amount / per_unit_risk)
-
-        return max(qty, 0)

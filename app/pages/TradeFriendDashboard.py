@@ -181,8 +181,8 @@ class TradeFriendDashboard(ttk.Frame):
             ), tags=(tag,))
 
         # ---------- KPI UPDATE ----------
-        self.kpi_labels["capital"].config(text="💰 Capital: 1,00,000")
-        self.kpi_labels["active"].config(text=f"📊 Active: {active}")
+        self.kpi_labels["capital"].config(text="💰 Capital: 1,00,000", foreground="black")
+        self.kpi_labels["active"].config(text=f"📊 Active: {active}", foreground="black")
         self.kpi_labels["profit"].config(text=f"🟢 Wins: {win}", foreground="green")
         self.kpi_labels["loss"].config(text=f"🔴 Loss: {loss}", foreground="red")
         self.kpi_labels["pnl"].config(
@@ -195,17 +195,34 @@ class TradeFriendDashboard(ttk.Frame):
     # =====================================================
 
     def _get_ltp_cached(self, symbol):
-        now = datetime.now().time()
+        now = datetime.now()
+        weekday = now.weekday()  # Monday=0, Sunday=6
+        current_time = now.time()
 
-        after_market = now >= time(16, 30) or now <= time(8, 0)
+        # ---------- MARKET SESSION RULES ----------
+        is_weekend = weekday in (5, 6)  # Sat, Sun
+        is_friday_after_close = weekday == 4 and current_time >= time(16, 30)
+        is_monday_before_open = weekday == 0 and current_time < time(7, 30)
 
-        if after_market and symbol in self.ltp_cache:
-            return self.ltp_cache[symbol][0]
+        market_closed = (
+            is_weekend or
+            is_friday_after_close or
+            is_monday_before_open or
+            current_time < time(7, 30) or
+            current_time >= time(16, 30)
+        )
 
+        # ---------- IF MARKET CLOSED ----------
+        if market_closed:
+            if symbol in self.ltp_cache:
+                return self.ltp_cache[symbol][0]
+            return None
+
+        # ---------- MARKET OPEN → FETCH ----------
         try:
             ltp = self.provider.get_ltp(symbol)
             if ltp:
-                self.ltp_cache[symbol] = (ltp, datetime.now())
+                self.ltp_cache[symbol] = (ltp, now)
             return ltp
         except Exception:
             return None
