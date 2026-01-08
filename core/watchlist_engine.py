@@ -2,6 +2,7 @@ import logging
 import time
 from core.TradeFriendDataProvider import TradeFriendDataProvider
 from db.TradeFriendDatabase import TradeFriendDatabase
+from db.TradeFriendTradeRepo import TradeFriendTradeRepo
 from strategy.TradeFriendScanner import TradeFriendScanner
 from db.tradefindinstrument_db import TradeFindDB
 from db.TradeFriendWatchlistRepo import TradeFriendWatchlistRepo
@@ -28,9 +29,18 @@ class WatchlistEngine:
 
         self.watchlist_repo = TradeFriendWatchlistRepo()
         self.swing_plan_repo = TradeFriendSwingPlanRepo()
+        self.trade_repo = TradeFriendTradeRepo()
 
     def run(self):
         logger.info("📊 Daily Watchlist Scan started")
+
+        watchlist_symbols = self.watchlist_repo.get_all_symbols()
+        trade_symbols = self.trade_repo.get_all_symbols()
+
+        # ✅ CLEANUP: stale & never-triggered watchlist entries
+        self.watchlist_repo.delete_untriggered_older_than(days=7)
+        self.swing_plan_repo.delete_orphan_plans()
+
 
         symbols = self.instrument_db.get_active()
         if not symbols:
@@ -39,6 +49,17 @@ class WatchlistEngine:
 
         for row in symbols:
             symbol = row["symbol"]
+             # ⛔ SKIP if already in Watchlist
+            if symbol in watchlist_symbols:
+                logger.info(f"{symbol} → Skipped (already in watchlist)")
+                continue
+            
+            # ⛔ SKIP if already traded
+            if symbol in trade_symbols:
+                logger.info(f"{symbol} → Skipped (already traded)")
+                continue
+
+
             logger.info(f"Processing {symbol}")
 
             try:

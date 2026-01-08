@@ -15,18 +15,23 @@ class TradeFriendManager:
     """
 
     # ---------------- Daily Scan ----------------
-    def tf_daily_scan(self):
-        logger.info("📊 TradeFriend daily scan started")
+    def tf_daily_scan(self, mode: str):
+        logger.info(f"📊 TradeFriend Daily scan started | Mode={mode}")
         engine = WatchlistEngine()
         engine.run()
-        logger.info("✅ TradeFriend daily scan completed")
+        logger.info("✅ TradeFriend Daily scan completed")
 
     # ---------------- Morning Confirmation ----------------
-    def tf_morning_confirm(self, capital: float):
-        logger.info("🚀 TradeFriend morning confirmation started")
-        runner = TradeFriendDecisionRunner()
-        runner.run(capital=capital)
-        logger.info("✅ TradeFriend morning confirmation completed")
+    def tf_morning_confirm(self, capital: float, mode: str):
+        logger.info(f"🚀 TradeFriend Morning confirmation started | Mode={mode}")
+
+        # # 👉 scorer can be simple for now
+        # scorer = None  # or DummyScorer()
+
+        runner = TradeFriendDecisionRunner(mode=mode,capital=capital)
+        runner.run()
+
+        logger.info("✅ TradeFriend Morning confirmation completed")
 
     # ---------------- Trade Monitoring ----------------
     def tf_monitor(self):

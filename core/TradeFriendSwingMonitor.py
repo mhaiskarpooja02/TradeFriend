@@ -1,16 +1,13 @@
 import logging
+from datetime import date
 from utils.logger import get_logger
 from core.TradeFriendDataProvider import TradeFriendDataProvider
-from db.TradeFriendDatabase import TradeFriendDatabase
 from db.TradeFriendTradeRepo import TradeFriendTradeRepo
-from datetime import date
 from config.TradeFriendConfig import (
     PAPER_TRADE,
     ENABLE_PARTIAL_BOOKING,
     PARTIAL_BOOK_RR,
-    PARTIAL_BOOK_PERCENT,
     SL_ON_CLOSE,
-    PARTIAL_BOOK_RR,
     HARD_EXIT_R_MULTIPLE,
     TRAIL_ATR_MULTIPLE
 )
@@ -21,26 +18,21 @@ logger = get_logger(__name__)
 class TradeFriendSwingTradeMonitor:
     """
     PURPOSE:
-    - Monitor OPEN swing trades
-    - Handle SL / Partial / Target
-    - Paper mode only
+    - Monitor OPEN / PARTIAL swing trades
+    - Handle SL / Partial / Target / Emergency
+    - Single terminal exit gate
     """
 
     def __init__(self, paper_trade=True):
         self.paper_trade = PAPER_TRADE
-
-
-        # 🔌 Shared infra
         self.provider = TradeFriendDataProvider()
-        self.db = TradeFriendDatabase()
         self.trade_repo = TradeFriendTradeRepo()
 
+    # =====================================================
+    # PUBLIC ENTRY
+    # =====================================================
     def run(self):
-        """
-        Called every X minutes during market hours
-        """
         open_trades = self.trade_repo.fetch_open_trades()
-
         if not open_trades:
             return
 
@@ -52,15 +44,34 @@ class TradeFriendSwingTradeMonitor:
                     f"Trade monitor failed for {trade['symbol']}: {e}"
                 )
 
-    # -------------------------------------------------
-    # CORE TRADE MANAGEMENT LOGIC
-    # -------------------------------------------------
+    # =====================================================
+    # SINGLE EXIT GATE (VERY IMPORTANT)
+    # =====================================================
+    def _finalize_trade(self, trade, reason: str, exit_price: float | None = None):
+        """
+        Single exit point for ALL terminal trade outcomes
+        """
+        symbol = trade["symbol"]
+
+        if exit_price is None:
+            exit_price = self.provider.get_ltp(symbol)
+
+        self.trade_repo.close_and_archive(
+            trade=trade,
+            exit_price=exit_price,
+            exit_reason=reason
+        )
+
+        logger.info(f"✅ Trade CLOSED | {symbol} | Reason={reason}")
+
+    # =====================================================
+    # CORE LOGIC
+    # =====================================================
     def _process_trade(self, trade):
         """
-        trade is sqlite3.Row (NOT dict)
-        Access ONLY using trade["column"]
+        trade is sqlite3.Row → access ONLY via trade["col"]
         """
-    
+
         # -----------------------------
         # BASIC FIELDS
         # -----------------------------
@@ -70,93 +81,86 @@ class TradeFriendSwingTradeMonitor:
         target = float(trade["target"])
         qty = int(trade["qty"])
         status = trade["status"]
-    
-        trailing_sl = float(trade["trailing_sl"]) if trade["trailing_sl"] is not None else sl
-        hold_mode = int(trade["hold_mode"]) if trade["hold_mode"] is not None else 0
+
+        trailing_sl = float(trade["trailing_sl"]) if trade["trailing_sl"] else sl
+        hold_mode = int(trade["hold_mode"] or 0)
         entry_day = trade["entry_day"]
-    
+
         logger.info(f"📡 Monitoring {symbol} | Status={status} | Qty={qty}")
-    
+
         # -----------------------------
-        # 1️⃣ FETCH LTP
+        # FETCH LTP
         # -----------------------------
         ltp = self.provider.get_ltp(symbol)
         if ltp is None:
             logger.warning(f"{symbol} → LTP not available")
             return
-    
+
         risk = entry - sl
         today = date.today().isoformat()
-    
-        # -----------------------------
-        # 2️⃣ EMERGENCY HARD EXIT
-        # -----------------------------
+
+        # =================================================
+        # 1️⃣ EMERGENCY HARD EXIT
+        # =================================================
         if ltp <= entry - (risk * HARD_EXIT_R_MULTIPLE):
             logger.warning(f"{symbol} → EMERGENCY EXIT")
-            self.trade_repo.close_trade(trade["id"], "EMERGENCY_EXIT")
+            self._finalize_trade(trade, "EMERGENCY_EXIT", ltp)
             return
-    
-        # -----------------------------
-        # 3️⃣ STOP LOSS LOGIC
-        # -----------------------------
+
+        # =================================================
+        # 2️⃣ STOP LOSS LOGIC
+        # =================================================
         active_sl = max(sl, trailing_sl)
-    
+
         if ltp <= active_sl:
-        
-            # ENTRY DAY → IMMEDIATE SL
+
+            # Entry-day immediate SL
             if entry_day == today:
                 logger.info(f"{symbol} → SL hit on entry day")
-                self.trade_repo.close_trade(trade["id"], "SL_HIT")
+                self._finalize_trade(trade, "SL_HIT", ltp)
                 return
-    
-            # HOLD MODE → DAILY CLOSE SL
+
+            # Hold mode → SL on daily close
             if hold_mode == 1 and SL_ON_CLOSE:
                 daily_close = self.provider.get_last_close(symbol)
                 if daily_close is not None and daily_close < active_sl:
                     logger.info(f"{symbol} → SL on close")
-                    self.trade_repo.close_trade(trade["id"], "SL_CLOSE_BASED")
-                return
-    
+                    self._finalize_trade(trade, "SL_CLOSE_BASED", daily_close)
+                    return
+
             logger.info(f"{symbol} → SL HIT")
-            self.trade_repo.close_trade(trade["id"], "SL_HIT")
+            self._finalize_trade(trade, "SL_HIT", ltp)
             return
-    
-        # -----------------------------
-        # 4️⃣ PARTIAL PROFIT @ 1R
-        # -----------------------------
-        one_r_price = entry + (risk * PARTIAL_BOOK_RR)
-    
-        if status == "OPEN" and ltp >= one_r_price:
-            partial_qty = qty // 2
-    
-            if partial_qty > 0:
-                logger.info(f"{symbol} → Partial booking @ {one_r_price}")
-                self.trade_repo.partial_exit(
-                    trade_id=trade["id"],
-                    exit_qty=partial_qty
-                )
-                self.trade_repo.enable_hold_mode(trade["id"])
-            return
-    
-        # -----------------------------
-        # 5️⃣ TRAILING SL (AFTER PARTIAL)
-        # -----------------------------
+
+        # =================================================
+        # 3️⃣ PARTIAL PROFIT @ 1R
+        # =================================================
+        if ENABLE_PARTIAL_BOOKING and status == "OPEN":
+            one_r_price = entry + (risk * PARTIAL_BOOK_RR)
+
+            if ltp >= one_r_price:
+                partial_qty = qty // 2
+                if partial_qty > 0:
+                    logger.info(f"{symbol} → Partial booking @ {one_r_price}")
+                    self.trade_repo.partial_exit(trade["id"], partial_qty)
+                    self.trade_repo.enable_hold_mode(trade["id"])
+                return
+
+        # =================================================
+        # 4️⃣ TRAILING SL (AFTER PARTIAL)
+        # =================================================
         if hold_mode == 1:
             atr = self.provider.get_atr(symbol, period=14)
             if atr:
                 new_trailing_sl = ltp - (atr * TRAIL_ATR_MULTIPLE)
-    
                 if new_trailing_sl > trailing_sl:
                     logger.info(f"{symbol} → Trail SL to {new_trailing_sl}")
-                    self.trade_repo.update_sl(
-                        trade_id=trade["id"],
-                        new_sl=new_trailing_sl
-                    )
-    
-        # -----------------------------
-        # 6️⃣ FINAL TARGET
-        # -----------------------------
+                    self.trade_repo.update_sl(trade["id"], new_trailing_sl)
+
+        # =================================================
+        # 5️⃣ FINAL TARGET
+        # =================================================
         if ltp >= target:
             logger.info(f"{symbol} → TARGET HIT")
-            self.trade_repo.close_trade(trade["id"], "TARGET_HIT")
+            self._finalize_trade(trade, "TARGET_HIT", ltp)
             return

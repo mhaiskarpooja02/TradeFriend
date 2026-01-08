@@ -1,3 +1,5 @@
+# core/TradeFriendRiskManager.py
+
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
 
 
@@ -6,71 +8,73 @@ class TradeFriendRiskManager:
     PURPOSE:
     - Enforce swing trading guardrails
     - Amount-based (no percentages)
-    - Stateless (reads repo + settings only)
+    - Stateless (reads repo + trade_repo only)
+    - Returns allowed_qty for PositionSizer
     """
 
     def __init__(self):
         self.settings = TradeFriendSettingsRepo()
 
     # -------------------------------------------------
-    # MAIN GATE
+    # MAIN CHECK
     # -------------------------------------------------
     def can_take_trade(self, trade_repo, position_value: float, entry_price: float):
         """
-        Returns (allowed: bool, reason: str)
+        Returns:
+            allowed: bool
+            reason: str
+            allowed_qty: int (based on price brackets)
         """
+        settings_data = self.settings.fetch()  # single fetch
 
         # 1️⃣ MAX OPEN TRADES
-        max_open_trades = self.settings.get_int("max_open_trades")
-        if max_open_trades > 0:
-            current = trade_repo.count_open_trades()
-            if current >= max_open_trades:
-                return False, "Max open trades limit reached"
+        max_open_trades = settings_data["max_open_trades"] or 0
+        if max_open_trades > 0 and trade_repo.count_open_trades() >= max_open_trades:
+            return False, "Max open trades limit reached", 0
 
-        # 2️⃣ TOTAL SWING CAPITAL LIMIT
-        max_swing_capital = self.settings.get_float("max_swing_capital")
-        if max_swing_capital > 0:
-            used_capital = trade_repo.sum_open_position_value()
-            if used_capital + position_value > max_swing_capital:
-                return False, "Max swing capital exceeded"
+        # 2️⃣ TOTAL SWING CAPITAL
+        max_swing_capital = settings_data["max_swing_capital"] or 0
+        available_swing_capital = settings_data["available_swing_capital"] or 0
+        used_capital = trade_repo.sum_open_position_value() or 0
 
-        # 3️⃣ PER TRADE CAPITAL LIMIT
-        max_per_trade = self.settings.get_float("max_per_trade_capital")
+        if max_swing_capital > 0 and (used_capital + position_value) > max_swing_capital:
+            return False, "Max swing capital exceeded", 0
+
+        if available_swing_capital > 0 and position_value > available_swing_capital:
+            return False, "Position exceeds available swing capital", 0
+
+        # 3️⃣ PER-TRADE CAPITAL
+        max_per_trade = settings_data["max_per_trade_capital"] or 0
         if max_per_trade > 0 and position_value > max_per_trade:
-            return False, "Per-trade capital cap exceeded"
+            return False, "Per-trade capital cap exceeded", 0
 
-        # 4️⃣ PRICE BRACKET VALIDATION (CRITICAL)
-        if not self._is_price_allowed(entry_price):
-            return False, "Price not allowed as per configured brackets"
+        # 4️⃣ PRICE BRACKET VALIDATION
+        allowed_qty = self._allowed_qty_for_price(entry_price, settings_data)
+        if allowed_qty <= 0:
+            return False, "Price not allowed per configured brackets", 0
 
-        return True, "Allowed"
+        return True, "Allowed", allowed_qty
 
     # -------------------------------------------------
     # PRICE BRACKET CHECK
     # -------------------------------------------------
-    def _is_price_allowed(self, price: float) -> bool:
+    def _allowed_qty_for_price(self, price: float, settings_data: dict) -> int:
         """
-        Checks if entry price falls inside ANY enabled price bracket
+        Determine quantity allowed for a given price using settings
         """
+        brackets = [
+            {"min": 100, "qty": settings_data.get("qty_gt_100", 0)},
+            {"min": 200, "qty": settings_data.get("qty_gt_200", 0)},
+            {"min": 500, "qty": settings_data.get("qty_gt_500", 0)},
+            {"min": 700, "qty": settings_data.get("qty_gt_700", 0)},
+            {"min": 1000, "qty": settings_data.get("qty_gt_1000", 0)},
+            {"min": 1500, "qty": settings_data.get("qty_gt_1500", 0)},
+            {"min": 2000, "qty": settings_data.get("qty_gt_2000", 0)},
+        ]
 
-        brackets = self.settings.get_price_brackets()
-
-        if not brackets:
-            # If not configured → allow by default
-            return True
-
+        allowed_qty = 0
         for b in brackets:
-            if not b.get("enabled", True):
-                continue
+            if price >= b["min"] and b["qty"]:
+                allowed_qty = b["qty"]
 
-            min_p = b.get("min", 0)
-            max_p = b.get("max")
-
-            if max_p is None:
-                if price >= min_p:
-                    return True
-            else:
-                if min_p <= price < max_p:
-                    return True
-
-        return False
+        return allowed_qty

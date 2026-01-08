@@ -47,6 +47,25 @@ class TradeFriendSwingPlanRepo:
     # SAVE NEW PLAN
     # -----------------------------
     def save_plan(self, plan: dict):
+        """
+        Accepts normalized plan dict from planner.
+        Handles schema mapping internally.
+        """
+    
+        # 🔒 Normalize input once
+        plan = dict(plan)
+    
+        # ✅ Backward / forward compatible target resolution
+        target1 = (
+            plan.get("target1")
+            or plan.get("target")
+        )
+    
+        if target1 is None:
+            raise ValueError(
+                f"SwingPlan missing target/target1 for {plan.get('symbol')}"
+            )
+    
         self.conn.execute("""
             INSERT INTO swing_trade_plans
             (symbol, strategy, entry, sl, target1, rr,
@@ -57,11 +76,12 @@ class TradeFriendSwingPlanRepo:
             plan.get("strategy"),
             plan["entry"],
             plan["sl"],
-            plan["target1"],
+            float(target1),
             plan.get("rr"),
             plan["expiry_date"]
         ))
         self.conn.commit()
+
 
     # -----------------------------
     # FETCH ACTIVE PLANS
@@ -108,4 +128,18 @@ class TradeFriendSwingPlanRepo:
             SET status = 'CANCELLED'
             WHERE id = ?
         """, (plan_id,))
+        self.conn.commit()
+    # -----------------------
+    # delete_orphan_plans 
+    # -----------------------
+    def delete_orphan_plans(self):
+        """
+        Delete swing plans whose symbol no longer exists in watchlist
+        """
+        self.conn.execute("""
+            DELETE FROM swing_trade_plans
+            WHERE symbol NOT IN (
+                SELECT symbol FROM tradefriend_watchlist
+            )
+        """)
         self.conn.commit()

@@ -70,3 +70,26 @@ class TradeFriendWatchlistRepo:
             ORDER BY scanned_on DESC
         """)
         return cursor.fetchall()
+    
+    def get_all_symbols(self) -> set:
+     rows = self.conn.execute(
+         "SELECT DISTINCT symbol FROM tradefriend_watchlist"
+     ).fetchall()
+     return {r["symbol"] for r in rows}
+
+    
+    # ---------------- delete_untriggered_older_than ----------------
+    def delete_untriggered_older_than(self, days: int = 7):
+        """
+        Delete watchlist entries older than N days
+        ONLY IF they never converted into a trade
+        """
+        self.conn.execute("""
+            DELETE FROM tradefriend_watchlist
+            WHERE scanned_on <= datetime('now', ?)
+              AND symbol NOT IN (
+                  SELECT DISTINCT symbol
+                  FROM tradefriend_trades
+              )
+        """, (f'-{days} days',))
+        self.conn.commit()

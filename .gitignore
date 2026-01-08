@@ -132,6 +132,7 @@ ChartInk_*.csv
 input/**/*.csv
 RangeBoundInput/**/*.csv
 RangeBoundInputOld/**/*.csv
+reports/**/*.pdf
 
 ############################
 # Logs & runtime outputs

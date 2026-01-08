@@ -1,51 +1,123 @@
 # core/TradeFriendPositionSizer.py
 
+from utils.logger import get_logger
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
+
+logger = get_logger(__name__)
 
 
 class TradeFriendPositionSizer:
     """
-    Calculates position size using absolute capital rules
+    PURPOSE:
+    - Calculate trade quantity using PRICE → FIXED QTY slabs
+    - Enforce per-trade & available swing capital limits
+    - Fully amount-based (no % risk logic)
     """
 
     def __init__(self):
-        self.settings = TradeFriendSettingsRepo()
+        self.settings_repo = TradeFriendSettingsRepo()
 
-    def calculate(self, entry: float, sl: float) -> dict:
-        if entry <= 0 or sl <= 0:
-            raise ValueError("Invalid price")
+    # -------------------------------------------------
+    # MAIN
+    # -------------------------------------------------
+    def calculate(self, entry_price: float) -> dict:
+        """
+        Always returns a dict:
+        {
+            qty: int,
+            entry: float,
+            position_value: float
+        }
+        """
 
-        per_unit_risk = abs(entry - sl)
-        if per_unit_risk == 0:
-            raise ValueError("Entry and SL cannot be same")
+        if not entry_price or entry_price <= 0:
+            raise ValueError("Invalid entry price")
 
-        total_capital = self.settings.get("total_capital", float)
-        swing_capital = self.settings.get("swing_capital_amount", float)
-        per_trade_cap = self.settings.get("per_trade_capital_amount", float)
-        risk_amount = self.settings.get("risk_amount_per_trade", float)
+        # 🔒 HARD NORMALIZATION (fixes sqlite3.Row forever)
+        raw_settings = self.settings_repo.fetch()
+        settings = dict(raw_settings) if raw_settings else {}
 
-        # 🔒 Capital guards
-        allowed_capital = min(per_trade_cap, swing_capital)
+        logger.info(
+            f"PositionSizer.calculate() | Entry={entry_price} | Settings={settings}"
+        )
 
-        qty_risk_based = int(risk_amount / per_unit_risk)
-        qty_cap_based = int(allowed_capital / entry)
+        # -----------------------------
+        # 1️⃣ BASE QTY FROM PRICE SLABS
+        # -----------------------------
+        base_qty = self._qty_by_price(entry_price, settings)
 
-        qty = min(qty_risk_based, qty_cap_based)
+        if base_qty <= 0:
+            logger.info(
+                f"Qty disabled by price slabs | Entry={entry_price}"
+            )
+            return self._zero_qty(entry_price)
+
+        # -----------------------------
+        # 2️⃣ APPLY CAPITAL LIMITS
+        # -----------------------------
+        qty = base_qty
+
+        max_per_trade = float(settings.get("max_per_trade_capital") or 0)
+        available_capital = float(settings.get("available_swing_capital") or 0)
+
+        if max_per_trade > 0:
+            cap_qty = int(max_per_trade / entry_price)
+            qty = min(qty, cap_qty)
+
+        if available_capital > 0:
+            cap_qty = int(available_capital / entry_price)
+            qty = min(qty, cap_qty)
 
         if qty <= 0:
-            raise ValueError("Quantity resolved to zero")
+            logger.info(
+                f"Qty capped to zero | Entry={entry_price} | "
+                f"MaxTradeCap={max_per_trade} | AvailCap={available_capital}"
+            )
+            return self._zero_qty(entry_price)
+
+        position_value = round(qty * entry_price, 2)
 
         return {
-            "qty": qty,
-            "entry": entry,
-            "sl": sl,
-            "risk_amount": risk_amount,
-            "position_value": round(qty * entry, 2),
-            "per_unit_risk": round(per_unit_risk, 2)
+            "qty": int(qty),
+            "entry": float(entry_price),
+            "position_value": position_value
         }
 
-    def calculate_qty(self, entry: float, sl: float) -> int:
-        try:
-            return self.calculate(entry, sl)["qty"]
-        except Exception:
-            return 0
+    # -------------------------------------------------
+    # PRICE → QTY SLABS
+    # -------------------------------------------------
+    def _qty_by_price(self, price: float, settings: dict) -> int:
+        """
+        Highest matching slab wins
+        """
+
+        slabs = [
+            (2000, settings.get("qty_gt_2000", 0)),
+            (1500, settings.get("qty_gt_1500", 0)),
+            (1000, settings.get("qty_gt_1000", 0)),
+            (700,  settings.get("qty_gt_700", 0)),
+            (500,  settings.get("qty_gt_500", 0)),
+            (200,  settings.get("qty_gt_200", 0)),
+            (100,  settings.get("qty_gt_100", 0)),
+        ]
+
+        for min_price, qty in slabs:
+            try:
+                qty = int(qty or 0)
+            except Exception:
+                qty = 0
+
+            if price >= min_price and qty > 0:
+                return qty
+
+        return 0
+
+    # -------------------------------------------------
+    # ZERO-QTY SAFE RETURN
+    # -------------------------------------------------
+    def _zero_qty(self, entry_price: float) -> dict:
+        return {
+            "qty": 0,
+            "entry": float(entry_price),
+            "position_value": 0.0
+        }
