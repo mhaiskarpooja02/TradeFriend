@@ -1,19 +1,52 @@
 import os
 from datetime import datetime
-from reportlab.platypus import SimpleDocTemplate, Table, Paragraph, Spacer, TableStyle
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Table,
+    Paragraph,
+    Spacer
+)
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 
 
 class MorningConfirmPdfBuilder:
+    """
+    PURPOSE:
+    - Generate focused Morning Confirm PDFs
+    - One PDF per decision type (APPROVED / SKIPPED / REJECTED)
+    - No business logic, reporting only
+    """
 
-    def build(self, report):
+    def build(
+        self,
+        *,
+        title: str,
+        rows: list,
+        filename_suffix: str,
+        mode: str = "",
+        capital: float = 0.0
+    ) -> str:
+        """
+        Build a single-purpose Morning Confirm PDF.
+
+        :param title: Report title (shown in PDF)
+        :param rows: Filtered decision rows
+        :param filename_suffix: approved / skipped / rejected
+        :param mode: PAPER / LIVE
+        :param capital: Capital used for confirmation
+        """
+
+        if not rows:
+            return ""
+
         os.makedirs("reports/morning_confirm", exist_ok=True)
 
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         filename = (
             f"reports/morning_confirm/"
-            f"morning_confirm_{datetime.now():%Y%m%d_%H%M}.pdf"
+            f"morning_confirm_{timestamp}_{filename_suffix}.pdf"
         )
 
         doc = SimpleDocTemplate(
@@ -27,23 +60,24 @@ class MorningConfirmPdfBuilder:
 
         styles = getSampleStyleSheet()
         normal = styles["Normal"]
-        title = styles["Title"]
+        title_style = styles["Title"]
 
         elements = []
 
         # -------------------------
         # HEADER
         # -------------------------
-        elements.append(Paragraph("Morning Confirm Report", title))
+        elements.append(Paragraph(title, title_style))
         elements.append(Spacer(1, 8))
 
-        elements.append(
-            Paragraph(
-                f"<b>Mode:</b> {report.mode} &nbsp;&nbsp; "
-                f"<b>Capital:</b> ₹{report.capital}",
-                normal
+        if mode or capital:
+            elements.append(
+                Paragraph(
+                    f"<b>Mode:</b> {mode or '-'} &nbsp;&nbsp; "
+                    f"<b>Capital:</b> ₹{capital or '-'}",
+                    normal
+                )
             )
-        )
 
         elements.append(
             Paragraph(
@@ -63,19 +97,19 @@ class MorningConfirmPdfBuilder:
         ]]
 
         # -------------------------
-        # TABLE ROWS (WRAPPED TEXT)
+        # TABLE ROWS
         # -------------------------
-        for r in report.rows:
+        for r in rows:
             data.append([
                 r.get("symbol", ""),
-                r.get("ltp", ""),
-                r.get("entry", ""),
-                r.get("sl", ""),
-                r.get("target", ""),
+                r.get("ltp", "-"),
+                r.get("entry", "-"),
+                r.get("sl", "-"),
+                r.get("target", "-"),
                 r.get("decision", ""),
-                Paragraph(str(r.get("reason", "")), normal),  # ✅ WRAP TEXT
-                r.get("qty", ""),
-                r.get("position_value", ""),
+                Paragraph(str(r.get("reason", "")), normal),
+                r.get("qty", "-"),
+                r.get("position_value", "-"),
                 r.get("confidence") if r.get("confidence") is not None else "-"
             ])
 
@@ -86,13 +120,13 @@ class MorningConfirmPdfBuilder:
             data,
             repeatRows=1,
             colWidths=[
-                70,   # Symbol
-                43,   # LTP
-                43,   # Entry
-                43,   # SL
-                43,   # Target
+                65,   # Symbol
+                40,   # LTP
+                40,   # Entry
+                40,   # SL
+                45,   # Target
                 55,   # Decision
-                160,  # Reason (WIDE + WRAP)
+                170,  # Reason (wrapped)
                 35,   # Qty
                 55,   # Pos Value
                 35    # Conf

@@ -381,7 +381,7 @@ class TradeFriendDashboard(ttk.Frame):
 
     def run_monitor(self):
         self._run_threaded(
-            lambda: self.manager.tf_monitor(mode=self.trade_mode),
+            lambda: self.manager.tf_monitor(),
             "Monitor Failed"
         )
 
