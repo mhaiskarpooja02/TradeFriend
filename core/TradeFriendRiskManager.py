@@ -25,8 +25,9 @@ class TradeFriendRiskManager:
             reason: str
             allowed_qty: int (based on price brackets)
         """
-        settings_data = self.settings.fetch()  # single fetch
-
+        #settings_data = self.settings.fetch()  # single fetch
+        raw_settings = self.settings.fetch()
+        settings_data = dict(raw_settings)  # 🔒 CRITICAL FIX
         # 1️⃣ MAX OPEN TRADES
         max_open_trades = settings_data["max_open_trades"] or 0
         if max_open_trades > 0 and trade_repo.count_open_trades() >= max_open_trades:

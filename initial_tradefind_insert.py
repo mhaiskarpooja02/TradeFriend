@@ -91,7 +91,21 @@ def initial_insert_symbols(input_folder):
     logger.info(f"➡ Inserted / Updated: {inserted}")
     logger.info(f"➡ Rejected: {len(rejected)}")
 
+def get_symbols_for_validation(self):
+    """
+    Placeholder method.
 
+    Responsibility:
+    - Return a normalized list of symbols to be validated.
+    - Future versions may:
+        - Pull from DB
+        - Merge multiple sources
+        - Apply filters (watchlist, sector, etc.)
+
+    Expected return:
+        List[str]
+    """
+    return []
 # ------------------------------
 # ENTRY POINT
 # ------------------------------

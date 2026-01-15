@@ -26079,5 +26079,148 @@
         "instrumenttype": "",
         "exch_seg": "NSE",
         "tick_size": "5.000000"
+    },
+    {
+        "token": "761192",
+        "symbol": "KRISHNADEF-EQ",
+        "name": "KRISHNADEF",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "2831",
+        "symbol": "RAMAVISION-EQ",
+        "name": "RAMAVISION",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "3490",
+        "symbol": "TIMEXWATCH-EQ",
+        "name": "TIMEXWATCH",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "1699",
+        "symbol": "JASCHIND-EQ",
+        "name": "JASCHIND",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "759265",
+        "symbol": "TATACAP-EQ",
+        "name": "TATACAP",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "16777",
+        "symbol": "SILVERAG-EQ",
+        "name": "SILVERAG",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "1708",
+        "symbol": "JAYBARMARU-EQ",
+        "name": "JAYBARMARU",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "761197",
+        "symbol": "GKSL-EQ",
+        "name": "GKSL",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "17207",
+        "symbol": "ITADD-EQ",
+        "name": "ITADD",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "21713",
+        "symbol": "LASA-EQ",
+        "name": "LASA",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "10948",
+        "symbol": "STCINDIA-EQ",
+        "name": "STCINDIA",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "2354",
+        "symbol": "DHARAN-EQ",
+        "name": "DHARAN",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
+    },
+    {
+        "token": "760007",
+        "symbol": "EXCELSOFT-EQ",
+        "name": "EXCELSOFT",
+        "expiry": "",
+        "strike": "-1.000000",
+        "lotsize": "1",
+        "instrumenttype": "",
+        "exch_seg": "NSE",
+        "tick_size": "5.000000"
     }
 ]

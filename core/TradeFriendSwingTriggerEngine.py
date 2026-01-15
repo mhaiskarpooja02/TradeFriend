@@ -2,9 +2,10 @@
 
 import logging
 from datetime import datetime
+from Servieces import TradeFriendOrderManagementService
 from core.TradeFriendDataProvider import TradeFriendDataProvider
 from core.TradeFriendPositionSizer import TradeFriendPositionSizer
-
+from brokers.dhan_client import DhanClient
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +32,9 @@ class TradeFriendSwingTriggerEngine:
 
         self.provider = TradeFriendDataProvider()
         self.sizer = TradeFriendPositionSizer()
+        # 🔥 Execution client (ONLY for LIVE)
+        self.broker = DhanClient() if not paper_trade else None
+        self.oms = TradeFriendOrderManagementService()
 
     # -----------------------------------
     # MAIN RUN METHOD
@@ -112,6 +116,13 @@ class TradeFriendSwingTriggerEngine:
         if qty <= 0:
             logger.warning(f"{symbol} → Qty zero after sizing")
             return
+        
+        # ---------------- DUPLICATE TRADE CHECK ----------------
+        if self.trade_repo.has_active_trade(symbol):
+            logger.warning(
+                f"⛔ DUPLICATE BLOCKED | {symbol} | Active trade already exists"
+            )
+            return
 
         # ---------------- SAVE TRADE ----------------
         trade = {
@@ -125,7 +136,15 @@ class TradeFriendSwingTriggerEngine:
             "status": "PAPER" if self.paper_trade else "LIVE"
         }
 
-        self.trade_repo.save_trade(trade)
+        # ---------------- SAVE TRADE ----------------
+        trade_id = self.trade_repo.save_trade(trade)
+
+        self.oms.place_trade(
+                trade_id=trade_id,
+                symbol=symbol,
+                qty=qty,
+                side="BUY"
+            )
 
         # ---------------- UPDATE PLAN STATUS ----------------
         self.swing_plan_repo.mark_triggered(plan["id"])

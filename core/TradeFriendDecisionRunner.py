@@ -57,27 +57,27 @@ class TradeFriendDecisionRunner:
         if not self.report.is_empty():
             pdf = MorningConfirmPdfBuilder()
             if self.report.approved():
-            pdf.build(
-                title="✅ Approved Trades",
-                rows=self.report.approved(),
-                filename_suffix="approved"
-            )
-
-        if self.report.skipped():
-            pdf.build(
-                title="⏸️ Skipped / Entry Not Triggered",
-                rows=self.report.skipped(),
-                filename_suffix="skipped"
-            )
-
-        if self.report.rejected():
-            pdf.build(
-                title="❌ Rejected Trades",
-                rows=self.report.rejected(),
-                filename_suffix="rejected"
-            )
+                pdf.build(
+                    title="✅ Approved Trades",
+                    rows=self.report.approved(),
+                    filename_suffix="approved"
+                )
+    
+            if self.report.skipped():
+                pdf.build(
+                    title="⏸️ Skipped / Entry Not Triggered",
+                    rows=self.report.skipped(),
+                    filename_suffix="skipped"
+                )
+    
+            if self.report.rejected():
+                pdf.build(
+                    title="❌ Rejected Trades",
+                    rows=self.report.rejected(),
+                    filename_suffix="rejected"
+                )
         
-        logger.info(f"📄 Morning Confirm Report generated → {path}")
+        #logger.info(f"📄 Morning Confirm Report generated → {path}")
 
     # -------------------------------------------------
     # PROCESS SINGLE PLAN

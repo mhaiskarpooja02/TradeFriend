@@ -23,41 +23,34 @@ class DhanClient(BaseBrokerClient):
     # ---------------------------------------------------------
     # ORDER FUNCTIONS
     # ---------------------------------------------------------
-    def place_order(self, security_id: str, qty: int, tag: str = None) -> bool:
-        """
-        Wrapper to place a SELL order in Dhan using standard defaults.
-        Fully compatible with Dhan SDK signature.
-        Logs request and response with timestamps.
+    # --------------------------------------------------
+    # GENERIC PLACE ORDER
+    # --------------------------------------------------
+    def place_order(
+        self,
+        security_id: str,
+        exchange_segment: str,
+        transaction_type: str,
+        quantity: int,
+        order_type: str,
+        product_type: str,
+        price: float = 0,
+        trigger_price: float = 0,
+        disclosed_quantity: int = 0,
+        after_market_order: bool = False,
+        validity: str = "DAY",
+        amo_time: str = "OPEN",
+        bo_profit_value=None,
+        bo_stop_loss_Value=None,
+        tag: str = None
+    ) -> bool:
 
-        Args:
-            security_id (str): The security ID to sell.
-            qty (int): Quantity to sell.
-            tag (str): Optional correlation ID for tracking.
-
-        Returns:
-            bool: True if order placed successfully, False otherwise.
-        """
         try:
-            # Fixed default parameters
-            transaction_type = "SELL"
-            exchange_segment = "NSE_EQ"
-            order_type = "MARKET"
-            product_type = "INTRADAY"
-            price = 0
-            trigger_price = 0
-            disclosed_quantity = 0
-            after_market_order = False
-            validity = "DAY"
-            amo_time = "OPEN"
-            bo_profit_value = None
-            bo_stop_loss_Value = None
-            should_slice = False
-
-            order_payload = {
+            payload = {
                 "security_id": security_id,
-                "qty": qty,
-                "transaction_type": transaction_type,
                 "exchange_segment": exchange_segment,
+                "transaction_type": transaction_type,
+                "quantity": quantity,
                 "order_type": order_type,
                 "product_type": product_type,
                 "price": price,
@@ -71,41 +64,28 @@ class DhanClient(BaseBrokerClient):
                 "tag": tag
             }
 
-            order_logger.info(f"[{datetime.now().isoformat()}] Dhan order request payload: {order_payload}")
-
-            # Call the SDK
-            response = self.dhan.place_order(
-                security_id=security_id,
-                exchange_segment=exchange_segment,
-                transaction_type=transaction_type,
-                quantity=qty,
-                order_type=order_type,
-                product_type=product_type,
-                price=price,
-                trigger_price=trigger_price,
-                disclosed_quantity=disclosed_quantity,
-                after_market_order=after_market_order,
-                validity=validity,
-                amo_time=amo_time,
-                bo_profit_value=bo_profit_value,
-                bo_stop_loss_Value=bo_stop_loss_Value,
-                tag=tag
+            logger.info(
+                f"[{datetime.now().isoformat()}] "
+                f"📤 DHAN REQUEST → {payload}"
             )
 
-            order_logger.info(f"[{datetime.now().isoformat()}] Dhan order response: {response}")
+            response = self.dhan.place_order(**payload)
 
-            # Check response success
-            if response and isinstance(response, dict) and response.get("status") == "success":
-                order_logger.info(f"Dhan order placed successfully: sid={security_id}, qty={qty}")
-                return True
-            else:
-                order_logger.warning(f"Dhan order not successful: sid={security_id}, qty={qty}, response={response}")
-                return False
+            logger.info(
+                f"[{datetime.now().isoformat()}] "
+                f"📥 DHAN RESPONSE → {response}"
+            )
 
-        except Exception as e:
-            logger.error(f"Dhan place_order error: {e}", exc_info=True)
+            if response and isinstance(response, dict):
+                status = response.get("status")
+                if status == "success":
+                    return True
+
             return False
 
+        except Exception:
+            logger.exception("❌ Dhan SDK place_order failed")
+            return False
     # ---------------------------------------------------------
     # HOLDINGS
     # ---------------------------------------------------------

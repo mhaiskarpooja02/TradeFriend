@@ -1,8 +1,12 @@
 import sqlite3
 import os
+import logging
 from datetime import datetime, date
 from db.TradeFriendTradeHistoryRepo import TradeFriendTradeHistoryRepo
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
+
+
+logger = logging.getLogger(__name__)
 
 DB_FOLDER = "dbdata"
 DB_FILE = os.path.join(DB_FOLDER, "tradefriend_trades.db")
@@ -117,7 +121,11 @@ class TradeFriendTradeRepo:
                 date.today().isoformat(),
                 datetime.now().isoformat()
             ))
+
+            trade_id = self.cursor.lastrowid
             self.conn.commit()
+
+            return trade_id
 
         except Exception:
             # 🔁 rollback capital if insert fails
@@ -154,13 +162,24 @@ class TradeFriendTradeRepo:
         """).fetchall()
 
     def fetch_active_trades(self, limit: int = 100):
-        return self.cursor.execute("""
+        rows = self.cursor.execute("""
             SELECT *
             FROM tradefriend_trades
             WHERE status IN ('OPEN', 'PARTIAL')
             ORDER BY created_on DESC
             LIMIT ?
         """, (limit,)).fetchall()
+
+        logger.info(
+            "📦 fetch_active_trades | rows=%d | statuses=%s",
+            len(rows),
+            list({r["status"] for r in rows}) if rows else []
+        )
+
+        if rows:
+            logger.debug("📦 First active trade → %s", dict(rows[0]))
+
+        return rows
 
     def has_open_trade(self, symbol: str) -> bool:
         cur = self.cursor.execute("""
@@ -256,3 +275,17 @@ class TradeFriendTradeRepo:
             WHERE status IN ('OPEN', 'PARTIAL')
         """).fetchall()
         return {r["symbol"] for r in rows}
+    
+    # -------------------------------------------------
+    # SYMBOL HELPERS (DASHBOARD / SCAN)
+    # -------------------------------------------------
+    def has_active_trade(self, symbol: str) -> bool:
+        query = """
+            SELECT 1
+            FROM swing_trades
+            WHERE symbol = ?
+              AND status IN ('PAPER', 'LIVE', 'OPEN', 'PARTIAL')
+            LIMIT 1;
+        """
+        row = self.cursor.execute(query, (symbol,)).fetchone()
+        return row is not None

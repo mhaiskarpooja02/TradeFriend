@@ -29,7 +29,11 @@ class TradeFriendInitialScanPdfGenerator:
             c.drawString(40, y, "No qualifying stocks found.")
         else:
             for r in rows:
-                if r.get("score", 0) < score_cutoff:
+                raw_score = r.get("score")
+
+                score = int(raw_score) if isinstance(raw_score, (int, float)) else 0
+
+                if score < score_cutoff:
                     continue
 
                 line = (
@@ -45,3 +49,4 @@ class TradeFriendInitialScanPdfGenerator:
                     y = height - 40
 
         c.save()
+

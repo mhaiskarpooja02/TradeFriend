@@ -322,7 +322,38 @@ class AngelClient:
                 logger.error(f" Error fetching intraday candles for {symbol} ({token}): {e}")
                 return {"prev": pd.DataFrame(), "today": pd.DataFrame()}
 
+    # ================================================================================
+    def place_order(self, payload: dict) -> str:
+        """
+        Place order via Angel SmartAPI.
 
+        Expected payload:
+        {
+            "variety": "NORMAL",
+            "tradingsymbol": "SBIN-EQ",
+            "symboltoken": "3045",
+            "transactiontype": "BUY",
+            "exchange": "NSE",
+            "ordertype": "MARKET",
+            "producttype": "INTRADAY",
+            "duration": "DAY",
+            "price": 0,
+            "quantity": 2
+        }
+
+        Returns:
+            order_id (str)
+        """
+        try:
+            if not self.smart_api:
+                raise Exception("Angel client not logged in")
+
+            order_id = self.smart_api.placeOrder(payload)
+            return order_id
+
+        except Exception as e:
+            logger.error(f"Angel place_order failed: {e}")
+            raise
 
 # ================================================================================
 # Singleton-style Helper Functions
