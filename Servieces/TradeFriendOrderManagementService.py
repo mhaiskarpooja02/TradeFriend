@@ -1,94 +1,178 @@
-import logging
-from db.TradeFriendOrderAuditRepo import TradeFriendOrderAuditRepo
-from db.TradeFriendOrderConfigRepo import TradeFriendOrderConfigRepo
+# Servieces/TradeFriendOrderManagementService.py
+
+from utils.logger import get_logger
+from db.TradeFriendBrokerTradeRepo import TradeFriendBrokerTradeRepo
+from config.TradeFriendConfig import PAPER_TRADE
 
 from brokers.tradefriend_dhan_order_adapter import TradeFriendDhanOrderAdapter
 from brokers.tradefriend_angel_order_adapter import TradeFriendAngelOrderAdapter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TradeFriendOrderManagementService:
     """
     PURPOSE:
-    - Central OMS router
-    - Reads broker behavior from DB
-    - Sends orders to eligible brokers
+    - Execute entry orders via brokers
+    - Maintain broker_trade lifecycle
+    - Multi-broker, retry-safe, audit-perfect
     """
 
     def __init__(self):
-        self.config_repo = TradeFriendOrderConfigRepo()
+        self.repo = TradeFriendBrokerTradeRepo()
 
-        # Initialize adapters (safe even if disabled)
+        # Broker adapters
         self.dhan = TradeFriendDhanOrderAdapter()
         self.angel = TradeFriendAngelOrderAdapter()
-        self.audit_repo = TradeFriendOrderAuditRepo()
 
-    # --------------------------------------------------
-    # PUBLIC API
-    # --------------------------------------------------
-    def process_trade(self, trade_id, symbol, qty, side):
-        cfg = self.config.get()
-        mode = cfg["order_mode"]
+    # =====================================================
+    # ENTRY EXECUTION
+    # =====================================================
+    def place_entry_order(
+        self,
+        trade_id: int,
+        symbol: str,
+        qty: int,
+        side: str,
+        price: float
+    ) -> list[dict]:
+        """
+        RETURNS: list of executions
+        [
+            {
+                broker,
+                filled_qty,
+                avg_price,
+                broker_order_id
+            }
+        ]
+        """
 
-        # -------- AUDIT: ATTEMPT --------
-        audit_id = self.audit_repo.log_attempt(
-            trade_id=trade_id,
-            symbol=symbol,
-            broker="OMS",
-            order_mode=mode,
-            side=side,
-            qty=qty
-        )
+        executions = []
 
-        # -------- PAPER MODE --------
-        if mode == "PAPER":
-            self.audit_repo.log_result(
-                audit_id,
-                status="SKIPPED",
-                error="PAPER mode"
+        # PAPER MODE → SIMULATE SINGLE BROKER
+        if PAPER_TRADE:
+            broker_trade_id = self.repo.log_attempt(
+                trade_id=trade_id,
+                broker="PAPER",
+                order_mode="PAPER",
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                order_type="MARKET",
+                request_payload={
+                    "symbol": symbol,
+                    "qty": qty,
+                    "side": side,
+                    "price": price
+                }
             )
-            return True
 
-        # -------- LIVE MODE --------
-        results = []
+            self.repo.log_success(
+                broker_trade_id=broker_trade_id,
+                broker_order_id=f"PAPER-{broker_trade_id}",
+                response_payload={
+                    "filled_qty": qty,
+                    "avg_price": price
+                }
+            )
 
-        if cfg["angel_enabled"] and cfg["angel_auto_order"]:
-            result = self.angel.place_order(symbol, qty, side)
-            results.append(("ANGEL", result))
+            executions.append({
+                "broker": "PAPER",
+                "filled_qty": qty,
+                "avg_price": price,
+                "broker_order_id": f"PAPER-{broker_trade_id}"
+            })
 
-        if cfg["dhan_enabled"] and cfg["dhan_auto_order"]:
-            result = self.dhan.place_order(symbol, qty, side)
-            results.append(("DHAN", result))
+            return executions
 
-        success = any(r[1] for r in results)
+        # LIVE MODE → MULTI BROKER
+        executions += self._try_angel(trade_id, symbol, qty, side)
+        executions += self._try_dhan(trade_id, symbol, qty, side)
 
-        self.audit_repo.log_result(
-            audit_id,
-            status="SUCCESS" if success else "FAILED"
+        return executions
+
+    # =====================================================
+    # BROKER ROUTERS
+    # =====================================================
+    def _try_angel(self, trade_id, symbol, qty, side):
+        executions = []
+
+        if not self.angel.is_enabled():
+            return executions
+
+        broker_trade_id = self.repo.log_attempt(
+            trade_id=trade_id,
+            broker="ANGEL",
+            order_mode="LIVE",
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            order_type="MARKET"
         )
 
-        return success
-    
-    # --------------------------------------------------
-    # INTERNAL ROUTERS
-    # --------------------------------------------------
-    def _try_dhan(self, order, cfg) -> bool:
-        if not (cfg["dhan_enabled"] and cfg["dhan_auto_order"]):
-            return False
+        try:
+            order = self.angel.place_order(symbol, qty, side)
+            if not order or not order.get("order_id"):
+                raise Exception("Angel rejected order")
 
-        max_qty = cfg.get("dhan_max_qty")
-        if max_qty:
-            order["qty"] = min(order["qty"], max_qty)
+            fill = self.angel.wait_for_fill(order["order_id"])
 
-        return self.dhan.place_order(order)
+            self.repo.log_success(
+                broker_trade_id,
+                broker_order_id=order["order_id"],
+                response_payload=fill
+            )
 
-    def _try_angel(self, order, cfg) -> bool:
-        if not (cfg["angel_enabled"] and cfg["angel_auto_order"]):
-            return False
+            executions.append({
+                "broker": "ANGEL",
+                "filled_qty": fill["filled_qty"],
+                "avg_price": fill["avg_price"],
+                "broker_order_id": order["order_id"]
+            })
 
-        max_qty = cfg.get("angel_max_qty")
-        if max_qty:
-            order["qty"] = min(order["qty"], max_qty)
+        except Exception as e:
+            self.repo.log_failure(broker_trade_id, str(e))
 
-        return self.angel.place_order(order)
+        return executions
+
+    def _try_dhan(self, trade_id, symbol, qty, side):
+        executions = []
+
+        if not self.dhan.is_enabled():
+            return executions
+
+        broker_trade_id = self.repo.log_attempt(
+            trade_id=trade_id,
+            broker="DHAN",
+            order_mode="LIVE",
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            order_type="MARKET"
+        )
+
+        try:
+            order = self.dhan.place_order(symbol, qty, side)
+            if not order or not order.get("order_id"):
+                raise Exception("Dhan rejected order")
+
+            fill = self.dhan.wait_for_fill(order["order_id"])
+
+            self.repo.log_success(
+                broker_trade_id,
+                broker_order_id=order["order_id"],
+                response_payload=fill
+            )
+
+            executions.append({
+                "broker": "DHAN",
+                "filled_qty": fill["filled_qty"],
+                "avg_price": fill["avg_price"],
+                "broker_order_id": order["order_id"]
+            })
+
+        except Exception as e:
+            self.repo.log_failure(broker_trade_id, str(e))
+
+        return executions

@@ -11,19 +11,19 @@ os.makedirs(DB_FOLDER, exist_ok=True)
 class TradeFriendSwingPlanRepo:
     """
     PURPOSE:
-    - Persist swing trade plans
-    - Manage lifecycle (PLANNED → TRIGGERED / EXPIRED / CANCELLED)
-    - Safe to use with scanners, monitors & reset scripts
+    - Single authoritative TRADE INTENT table
+    - Supports SWING / INTRADAY
+    - BUY / SELL
+    - Carry-forward aware
+    - Future-proof (no schema churn)
     """
 
     def __init__(self):
-        self.conn = sqlite3.connect(
-            DB_FILE,
-            check_same_thread=False
-        )
+        self.conn = sqlite3.connect(DB_FILE, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
-        # 🔒 CRITICAL for concurrency & locking
+
+        # 🔒 SQLite safety
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
         self.conn.execute("PRAGMA busy_timeout = 5000;")
@@ -34,15 +34,30 @@ class TradeFriendSwingPlanRepo:
     # TABLE & INDEX
     # --------------------------------------------------
     def _create_table(self):
+        """
+        NOTE:
+        You already backed up old data.
+        This creates a clean, final schema.
+        """
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS swing_trade_plans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+
                 symbol TEXT NOT NULL,
                 strategy TEXT,
+
+                direction TEXT DEFAULT 'BUY',        -- BUY / SELL
+                order_type TEXT DEFAULT 'MARKET',    -- BREAKOUT / PULLBACK / MARKET
+                trade_type TEXT DEFAULT 'SWING',     -- SWING / INTRADAY
+                carry_forward INTEGER DEFAULT 1,     -- 0 / 1
+                product_type TEXT DEFAULT 'CNC',     -- CNC / MIS / NRML
+
                 entry REAL NOT NULL,
                 sl REAL NOT NULL,
                 target1 REAL NOT NULL,
                 rr REAL,
+
                 status TEXT DEFAULT 'PLANNED',
                 expiry_date TEXT,
                 created_on TEXT DEFAULT (datetime('now')),
@@ -50,11 +65,11 @@ class TradeFriendSwingPlanRepo:
             )
         """)
 
-        # 🔹 Indexes for speed (1000+ stocks safe)
         self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_swing_plan_status
             ON swing_trade_plans(status)
         """)
+
         self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_swing_plan_symbol
             ON swing_trade_plans(symbol)
@@ -66,31 +81,33 @@ class TradeFriendSwingPlanRepo:
     # SAVE NEW PLAN
     # --------------------------------------------------
     def save_plan(self, plan: Dict):
-        """
-        Accepts normalized plan dict from planner.
-        Handles backward compatibility safely.
-        """
-
         if not plan:
             return
 
-        plan = dict(plan)  # normalize
+        plan = dict(plan)
 
-        # ✅ target compatibility
         target1 = plan.get("target1") or plan.get("target")
         if target1 is None:
-            raise ValueError(
-                f"SwingPlan missing target/target1 for {plan.get('symbol')}"
-            )
+            raise ValueError(f"Missing target for {plan.get('symbol')}")
 
         self.conn.execute("""
-            INSERT INTO swing_trade_plans
-            (symbol, strategy, entry, sl, target1, rr,
-             status, expiry_date, created_on)
-            VALUES (?, ?, ?, ?, ?, ?, 'PLANNED', ?, datetime('now'))
+            INSERT INTO swing_trade_plans (
+                symbol, strategy,
+                direction, order_type, trade_type, carry_forward, product_type,
+                entry, sl, target1, rr,
+                status, expiry_date, created_on
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PLANNED', ?, datetime('now'))
         """, (
             plan["symbol"],
             plan.get("strategy"),
+
+            plan.get("direction", "BUY"),
+            plan.get("order_type", "MARKET"),
+            plan.get("trade_type", "SWING"),
+            int(plan.get("carry_forward", 1)),
+            plan.get("product_type", "CNC"),
+
             float(plan["entry"]),
             float(plan["sl"]),
             float(target1),
@@ -101,19 +118,76 @@ class TradeFriendSwingPlanRepo:
         self.conn.commit()
 
     # --------------------------------------------------
+    # UPDATE EXISTING PLAN
+    # --------------------------------------------------
+    def update_plan(self, plan_id: int, new_plan: Dict):
+        if not plan_id or not new_plan:
+            return
+
+        new_plan = dict(new_plan)
+        target1 = new_plan.get("target1") or new_plan.get("target")
+
+        self.conn.execute("""
+            UPDATE swing_trade_plans
+            SET
+                entry = ?,
+                sl = ?,
+                target1 = ?,
+                rr = ?,
+                expiry_date = ?,
+                strategy = ?,
+
+                direction = COALESCE(?, direction),
+                order_type = COALESCE(?, order_type),
+                trade_type = COALESCE(?, trade_type),
+                carry_forward = COALESCE(?, carry_forward),
+                product_type = COALESCE(?, product_type)
+            WHERE id = ?
+        """, (
+            float(new_plan["entry"]),
+            float(new_plan["sl"]),
+            float(target1),
+            new_plan.get("rr"),
+            new_plan.get("expiry_date"),
+            new_plan.get("strategy"),
+
+            new_plan.get("direction"),
+            new_plan.get("order_type"),
+            new_plan.get("trade_type"),
+            new_plan.get("carry_forward"),
+            new_plan.get("product_type"),
+
+            plan_id
+        ))
+
+        self.conn.commit()
+
+    # --------------------------------------------------
     # FETCH ACTIVE PLANS
     # --------------------------------------------------
     def fetch_active_plans(self) -> List[sqlite3.Row]:
-        cursor = self.conn.execute("""
+        return self.conn.execute("""
             SELECT *
             FROM swing_trade_plans
             WHERE status = 'PLANNED'
             ORDER BY created_on DESC
-        """)
-        return cursor.fetchall()
+        """).fetchall()
 
     # --------------------------------------------------
-    # MARK PLAN AS TRIGGERED
+    # FETCH ACTIVE PLAN FOR SYMBOL
+    # --------------------------------------------------
+    def get_active_plan(self, symbol: str):
+        return self.conn.execute("""
+            SELECT *
+            FROM swing_trade_plans
+            WHERE symbol = ?
+              AND status = 'PLANNED'
+            ORDER BY created_on DESC
+            LIMIT 1
+        """, (symbol,)).fetchone()
+
+    # --------------------------------------------------
+    # MARK TRIGGERED
     # --------------------------------------------------
     def mark_triggered(self, plan_id: int):
         self.conn.execute("""
@@ -128,10 +202,6 @@ class TradeFriendSwingPlanRepo:
     # EXPIRE OLD PLANS
     # --------------------------------------------------
     def expire_old_plans(self):
-        """
-        Expire plans past expiry_date.
-        Handles NULL expiry safely.
-        """
         self.conn.execute("""
             UPDATE swing_trade_plans
             SET status = 'EXPIRED'
@@ -142,24 +212,9 @@ class TradeFriendSwingPlanRepo:
         self.conn.commit()
 
     # --------------------------------------------------
-    # CANCEL PLAN (MANUAL)
-    # --------------------------------------------------
-    def cancel_plan(self, plan_id: int):
-        self.conn.execute("""
-            UPDATE swing_trade_plans
-            SET status = 'CANCELLED'
-            WHERE id = ?
-        """, (plan_id,))
-        self.conn.commit()
-
-    # --------------------------------------------------
-    # DELETE ORPHAN PLANS
+    # DELETE ORPHANS
     # --------------------------------------------------
     def delete_orphan_plans(self):
-        """
-        Delete swing plans whose symbol
-        no longer exists in watchlist
-        """
         self.conn.execute("""
             DELETE FROM swing_trade_plans
             WHERE symbol NOT IN (
@@ -169,64 +224,23 @@ class TradeFriendSwingPlanRepo:
         self.conn.commit()
 
     # --------------------------------------------------
-    # UPDATE EXISTING PLAN (AVOID DUPLICATE)
+    # mark decision
     # --------------------------------------------------
-    def update_plan(self, plan_id: int, new_plan: Dict):
-        """
-        Update an existing swing plan instead of inserting a duplicate.
-        - Keeps status & created_on intact
-        - Supports target / target1 compatibility
-        """
-    
-        if not plan_id or not new_plan:
-            return
-    
-        new_plan = dict(new_plan)
-    
-        # ✅ target compatibility
-        target1 = new_plan.get("target1") or new_plan.get("target")
-        if target1 is None:
-            raise ValueError(
-                f"SwingPlan missing target/target1 for {new_plan.get('symbol')}"
-            )
-    
+    def mark_decision(self, plan_id: int, status: str):
         self.conn.execute("""
             UPDATE swing_trade_plans
-            SET
-                entry = ?,
-                sl = ?,
-                target1 = ?,
-                rr = ?,
-                expiry_date = ?,
-                strategy = ?
+            SET status = ?
             WHERE id = ?
-        """, (
-            float(new_plan["entry"]),
-            float(new_plan["sl"]),
-            float(target1),
-            new_plan.get("rr"),
-            new_plan.get("expiry_date"),
-            new_plan.get("strategy"),
-            plan_id
-        ))
-    
+        """, (status, plan_id))
         self.conn.commit()
 
-
     # --------------------------------------------------
-    # HARD RESET (FOR FRESH START)
+    # RESET
     # --------------------------------------------------
     def reset_all(self):
-        """
-        Clear all swing plans safely.
-        Use ONLY for testing / fresh start.
-        """
         self.conn.execute("DELETE FROM swing_trade_plans")
         self.conn.commit()
 
-    # --------------------------------------------------
-    # CLOSE CONNECTION (MANDATORY)
-    # --------------------------------------------------
     def close(self):
         try:
             self.conn.close()

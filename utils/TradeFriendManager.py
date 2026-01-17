@@ -28,7 +28,7 @@ class TradeFriendManager:
         # # 👉 scorer can be simple for now
         # scorer = None  # or DummyScorer()
 
-        runner = TradeFriendDecisionRunner(mode=mode,capital=capital)
+        runner = TradeFriendDecisionRunner()
         runner.run()
 
         logger.info("✅ TradeFriend Morning confirmation completed")

@@ -138,11 +138,11 @@ class TradeFriendDataProvider:
         }
         """
         try:
-            logger.info(f"Calling get ltp {resolved_symbol}")
+            
             resolved = self.resolver.resolve_symbol(resolved_symbol)
-            logger.info(f"Called get ltp {resolved}")
+            
             data = getltp(resolved)
-            logger.info(f"Called get ltp data {data}")
+            
             return data
         except Exception as e:
             logger.error(

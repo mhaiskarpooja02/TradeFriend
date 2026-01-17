@@ -1,35 +1,32 @@
 import logging
-from brokers.angel_client import init_client
-from db.tradefindinstrument_db import TradeFindDB
+
+from brokers.dhan_client import DhanClient
+from db.TradeFriendDhanInstrumentRepo import TradeFriendDhanInstrumentRepo
 from db.TradeFriendOrderAuditRepo import TradeFriendOrderAuditRepo
 
 logger = logging.getLogger(__name__)
 
 
-class TradeFriendAngelOrderAdapter:
+class TradeFriendDhanOrderAdapter:
     """
     PURPOSE:
-    - Prepare OMS → Angel payload
-    - Resolve token via TradeFindDB
-    - Execute via AngelClient
-    - Perform full order audit
+    - Place LIVE orders via Dhan
+    - Resolve security_id via TradeFriendDhanInstrumentRepo
+    - Record every attempt in TradeFriendOrderAuditRepo
     """
 
-    BROKER_NAME = "ANGEL"
-
-    EXCHANGE = "NSE"
+    BROKER_NAME = "DHAN"
+    EXCHANGE = "NSE_EQ"
     PRODUCT = "INTRADAY"
-    VARIETY = "NORMAL"
     ORDER_TYPE = "MARKET"
-    DURATION = "DAY"
 
     def __init__(self):
-        self.client = init_client()  # ✅ reuse singleton
-        self.instrument_repo = TradeFindDB()
+        self.client = DhanClient()
+        self.instrument_repo = TradeFriendDhanInstrumentRepo()
         self.audit_repo = TradeFriendOrderAuditRepo()
 
     # --------------------------------------------------
-    # PLACE ORDER (OMS ENTRY)
+    # PLACE ORDER (OMS ENTRY POINT)
     # --------------------------------------------------
     def place_order(
         self,
@@ -37,39 +34,53 @@ class TradeFriendAngelOrderAdapter:
         symbol: str,
         qty: int,
         side: str = "BUY",
+        tag: str = None,
         order_mode: str = "LIVE"
     ) -> bool:
+        """
+        OMS-compatible execution.
+
+        Args:
+            trade_id (int): swing_trade id
+            symbol (str): SBIN-EQ
+            qty (int): quantity
+            side (str): BUY (only)
+            tag (str): correlation tag
+            order_mode (str): LIVE / PAPER
+        """
 
         if qty <= 0:
-            logger.error(f"Invalid qty for {symbol}: {qty}")
+            logger.error(f"Invalid qty: {qty}")
+            return False
+
+        if side != "BUY":
+            logger.error("Dhan adapter currently supports BUY only")
             return False
 
         # --------------------------------------------------
-        # RESOLVE SYMBOL → TOKEN
+        # RESOLVE SECURITY ID
         # --------------------------------------------------
-        resolved = self.instrument_repo.resolve_active_symbol(symbol)
-        if not resolved:
-            logger.error(f"Angel token not found for {symbol}")
+        security_id = self.instrument_repo.resolve_security_id(symbol)
+        if not security_id:
+            logger.error(f"Dhan security_id not found for {symbol}")
             return False
 
         # --------------------------------------------------
-        # PREPARE PAYLOAD
+        # PREPARE REQUEST PAYLOAD (FOR AUDIT)
         # --------------------------------------------------
-        payload = {
-            "variety": self.VARIETY,
-            "tradingsymbol": resolved["symbol"],
-            "symboltoken": resolved["token"],
-            "transactiontype": side,
-            "exchange": self.EXCHANGE,
-            "ordertype": self.ORDER_TYPE,
-            "producttype": self.PRODUCT,
-            "duration": self.DURATION,
-            "price": 0,
-            "quantity": qty,
+        request_payload = {
+            "symbol": symbol,
+            "security_id": security_id,
+            "qty": qty,
+            "side": side,
+            "exchange_segment": self.EXCHANGE,
+            "order_type": self.ORDER_TYPE,
+            "product_type": self.PRODUCT,
+            "tag": tag
         }
 
         # --------------------------------------------------
-        # AUDIT → ATTEMPT
+        # AUDIT: ATTEMPT
         # --------------------------------------------------
         audit_id = self.audit_repo.log_attempt(
             trade_id=trade_id,
@@ -78,37 +89,53 @@ class TradeFriendAngelOrderAdapter:
             order_mode=order_mode,
             side=side,
             qty=qty,
-            resolved_id=resolved["token"],
+            resolved_id=security_id,
             exchange=self.EXCHANGE,
             product=self.PRODUCT,
             order_type=self.ORDER_TYPE,
-            request_payload=payload
+            request_payload=request_payload
         )
 
         # --------------------------------------------------
-        # EXECUTE
+        # EXECUTE ORDER
         # --------------------------------------------------
         try:
-            order_id = self.client.place_order(payload)
+            logger.info(
+                f"📤 DHAN ORDER | Symbol={symbol} | Qty={qty} | SID={security_id}"
+            )
 
+            result = self.client.place_order(
+                security_id=security_id,
+                qty=qty,
+                tag=tag
+            )
+
+            if not result:
+                raise Exception("Dhan order rejected")
+
+            # --------------------------------------------------
+            # AUDIT: SUCCESS
+            # --------------------------------------------------
             self.audit_repo.log_result(
                 audit_id=audit_id,
                 status="SUCCESS",
-                broker_order_id=order_id,
-                response_payload={"order_id": order_id}
+                response_payload={"status": "success"}
             )
 
             logger.info(
-                f"✅ ANGEL ORDER | {symbol} | Qty={qty} | OrderID={order_id}"
+                f"✅ DHAN order placed | Symbol={symbol} | Qty={qty}"
             )
             return True
 
         except Exception as e:
+            logger.exception("❌ DHAN order failed")
+
+            # --------------------------------------------------
+            # AUDIT: FAILURE
+            # --------------------------------------------------
             self.audit_repo.log_result(
                 audit_id=audit_id,
                 status="FAILED",
                 error_message=str(e)
             )
-
-            logger.exception(f"❌ ANGEL ORDER FAILED | {symbol}")
             return False

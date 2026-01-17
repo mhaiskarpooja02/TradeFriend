@@ -1,6 +1,7 @@
 # ---------------- CAPITAL & RISK ----------------
 SWING_CAPITAL = 10000
 RISK_PERCENT = 1.0
+ENTRY_TOLERANCE = 0.01   # 1%
 
 # ---------------- API / BROKER ----------------
 REQUEST_DELAY_SEC = 1.2

@@ -13,7 +13,7 @@ class TradeFriendTradeViewService:
     @staticmethod
    
     def active_trade_row(trade, ltp):
-        logger.info("📊 active_trade_row started")
+       
         logger.info(
         "📊 active_trade_row started | symbol=%s | ltp=%s | status=%s",
         trade.get("symbol"),

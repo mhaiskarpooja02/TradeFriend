@@ -60,7 +60,9 @@ class TradeFriendScanner:
             return {
                 "symbol": self.symbol,
                 "strategy": "Mid-Band Support",
-                "bias": "BULLISH"
+                "bias": "BULLISH",
+                "direction": "BUY",
+                "order_type": "PULLBACK"
             }
 
         # --------- SETUP 2: UPPER BAND EXPANSION ----------
@@ -76,7 +78,9 @@ class TradeFriendScanner:
             return {
                 "symbol": self.symbol,
                 "strategy": "Upper Band Expansion",
-                "bias": "BULLISH"
+                "bias": "BULLISH",
+                "direction": "BUY",
+                "order_type": "BREAKOUT"
             }
 
         # --------- NO SETUP ----------

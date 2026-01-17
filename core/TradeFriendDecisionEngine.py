@@ -9,83 +9,69 @@ logger = get_logger(__name__)
 
 class TradeFriendDecisionEngine:
     """
-    PURPOSE:
-    - Single authority for trade approval
-    - Validates signal, sizing, confidence, and risk
-    - Returns STRUCTURED decision (never raises to caller)
+    PURPOSE (PHASE-1 ONLY):
+    - Decide whether a swing plan is VALID for today
+    - Capital + confidence gate ONLY
+    - NO execution, NO tolerance, NO OMS
     """
 
     def __init__(self, trade_repo):
-        # 🔒 Engine OWNS its collaborators
         self.trade_repo = trade_repo
         self.sizer = TradeFriendPositionSizer()
         self.risk_manager = TradeFriendRiskManager()
 
-    # -------------------------------------------------
+    # =====================================================
     # MAIN EVALUATION
-    # -------------------------------------------------
-    def evaluate(self, ltp: float, signal: dict) -> dict:
+    # =====================================================
+    def evaluate(self, signal: dict) -> dict:
         """
-        Always returns a decision dict:
+        Returns:
         {
             decision: APPROVED | REJECTED,
             reason: str,
-            confidence: int | None,
+            confidence: int,
             trade: dict | None
         }
         """
 
-        logger.info(
-            f"DecisionEngine.evaluate() | ltp={ltp} | signal={signal}"
-        )
+        logger.info(f"DecisionEngine.evaluate | signal={signal}")
 
         # -------------------------------
-        # BASIC SIGNAL VALIDATION
+        # BASIC VALIDATION
         # -------------------------------
         symbol = signal.get("symbol")
-        entry = signal.get("entry")
-        confidence = int(signal.get("confidence") or 0)
+        entry = float(signal.get("entry", 0))
+        sl = float(signal.get("sl", 0))
+        target = float(signal.get("target", 0))
+        confidence = int(signal.get("confidence", 0))
 
-        if not symbol or not entry or entry <= 0 or not ltp or ltp <= 0:
-            logger.error(
-                f"Invalid signal | symbol={symbol} | entry={entry} | ltp={ltp}"
-            )
-            return self._reject("Invalid signal data", confidence)
+        if not symbol or entry <= 0 or sl <= 0 or entry <= sl:
+            return self._reject("Invalid price structure", confidence)
 
-        logger.info(
-            f"Evaluating trade | Symbol={symbol} | Entry={entry} | LTP={ltp} | Conf={confidence}"
-        )
-
-        # -------------------------------
-        # 1️⃣ ENTRY PRICE VALIDATION
-        # -------------------------------
-        tolerance = 0.003  # 0.3%
-        if abs(ltp - entry) / entry > tolerance:
-            return self._reject("Price moved", confidence)
-
-        # -------------------------------
-        # 2️⃣ CONFIDENCE CHECK
-        # -------------------------------
         if confidence < 6:
             return self._reject("Low confidence", confidence)
+        
+        # Inside evaluate()
+        if self.trade_repo.has_open_trade(symbol):
+            return self._reject("Duplicate: Active trade exists", confidence)
 
         # -------------------------------
-        # 3️⃣ POSITION SIZING
+        # POSITION SIZING (PLANNED)
         # -------------------------------
         try:
             sizing = self.sizer.calculate(entry_price=entry)
         except Exception as e:
-            logger.exception(f"Sizing failed | {symbol}")
-            return self._reject(f"Sizing failed: {e}", confidence)
+            logger.exception("Position sizing failed")
+            return self._reject(f"Sizing error: {e}", confidence)
 
         qty = int(sizing.get("qty", 0))
         position_value = float(sizing.get("position_value", 0))
 
         if qty <= 0:
-            return self._reject("Qty resolved to zero (disabled / capped)", confidence)
+            return self._reject("Qty resolved to zero", confidence)
 
         # -------------------------------
-        # 4️⃣ RISK MANAGER
+        # CAPITAL / RISK CHECK
         # -------------------------------
         allowed, reason, _ = self.risk_manager.can_take_trade(
             trade_repo=self.trade_repo,
@@ -97,21 +83,23 @@ class TradeFriendDecisionEngine:
             return self._reject(f"Risk blocked: {reason}", confidence)
 
         # -------------------------------
-        # 5️⃣ APPROVE & SAVE TRADE
+        # APPROVE (NO EXECUTION)
         # -------------------------------
         trade = {
-            **signal,
-            "qty": qty,
-            "confidence": confidence,
+            "symbol": symbol,
+            "entry": entry,
+            "sl": sl,
+            "target": target,
+            "qty": qty,     
+            "filled_qty": 0,
+            "avg_entry": None,
             "position_value": position_value,
-            "status": "OPEN"
+            "confidence": confidence,
+            "status": "READY",     # 🔒 PHASE-1 OUTPUT
+            "triggered": 0
         }
 
-        self.trade_repo.save_trade(trade)
-
-        logger.info(
-            f"✅ Trade APPROVED | {symbol} | Qty={qty} | PosValue={position_value}"
-        )
+        logger.info(f"✅ Trade APPROVED (READY) | {symbol}")
 
         return {
             "decision": "APPROVED",
@@ -120,11 +108,11 @@ class TradeFriendDecisionEngine:
             "trade": trade
         }
 
-    # -------------------------------------------------
-    # INTERNAL HELPERS
-    # -------------------------------------------------
-    def _reject(self, reason: str, confidence: int | None) -> dict:
-        logger.info(f"❌ Trade REJECTED | Reason={reason}")
+    # =====================================================
+    # INTERNAL
+    # =====================================================
+    def _reject(self, reason: str, confidence: int) -> dict:
+        logger.info(f"❌ Trade REJECTED | {reason}")
         return {
             "decision": "REJECTED",
             "reason": reason,

@@ -20,12 +20,17 @@ logger = get_logger(__name__)
 class WatchlistEngine:
     """
     PURPOSE:
-    - Daily scan
-    - Detect setups (Scanner)
-    - Build swing plans (Planner = authority)
+    - Daily market scan
+    - Detect swing setups (Scanner)
+    - Build executable plans (Planner = authority)
+    - Persist trade INTENT into swing_trade_plans
     - Populate watchlist (IDEA ONLY)
-    - Persist swing plans
-    - Generate clean reports
+    - Generate clean daily reports
+
+    IMPORTANT:
+    - No trading happens here
+    - No OMS calls
+    - This feeds Phase-1 Decision Runner & Phase-2 Trigger Engine
     """
 
     def __init__(self):
@@ -48,11 +53,10 @@ class WatchlistEngine:
         rejected_rows = []
         skipped_rows = []
 
-        watchlist_map = self.watchlist_repo.get_symbol_map()
         traded_symbols = set(self.trade_repo.get_all_symbols())
 
         # ----------------------------
-        # CLEANUP
+        # CLEANUP (SAFE)
         # ----------------------------
         self.watchlist_repo.delete_untriggered_older_than(days=7)
         self.swing_plan_repo.delete_orphan_plans()
@@ -69,8 +73,11 @@ class WatchlistEngine:
             symbol = row["symbol"]
 
             try:
-                logger.info(f"{symbol} → started scanner")
+                logger.info(f"{symbol} → Scanner started")
 
+                # ----------------------------
+                # FETCH DATA
+                # ----------------------------
                 df = self.provider.get_daily_data(
                     trading_symbol=row["trading_symbol"],
                     token=row["token"]
@@ -136,41 +143,59 @@ class WatchlistEngine:
                 })
 
                 # ----------------------------
-                # SAVE SWING PLAN
+                # 🔥 ATTACH TRADE INTENT
+                # ----------------------------
+                plan.update({
+                    "direction": signal.get("direction", "BUY"),
+                    "order_type": signal.get("order_type", "MARKET"),
+                    "trade_type": "SWING",        # Phase-1 default
+                    "carry_forward": 1,           # Swing = allowed
+                    "product_type": "CNC"
+                })
+
+                # ----------------------------
+                # SAVE / UPDATE SWING PLAN
                 # ----------------------------
                 existing_plan = self.swing_plan_repo.get_active_plan(symbol)
 
                 if existing_plan:
                     old_entry = float(existing_plan["entry"])
                     new_entry = float(plan["entry"])
-                
-                    # LONG logic
-                    if new_entry >= old_entry:
+
+                    # LONG logic (BUY)
+                    if plan["direction"] == "BUY" and new_entry >= old_entry:
                         skipped_rows.append({
                             "symbol": symbol,
                             "reason": "Worse entry than existing plan"
                         })
                         continue
-                    
-                    # ✅ Better entry → update
+
+                    # SHORT logic (future-ready)
+                    if plan["direction"] == "SELL" and new_entry <= old_entry:
+                        skipped_rows.append({
+                            "symbol": symbol,
+                            "reason": "Worse entry than existing plan"
+                        })
+                        continue
+
+                    # ✅ Better plan → update
                     self.swing_plan_repo.update_plan(
                         plan_id=existing_plan["id"],
                         new_plan=plan
                     )
+
                 else:
                     self.swing_plan_repo.save_plan(plan)
 
-
-                # self.swing_plan_repo.save_plan(plan)
-
                 # ----------------------------
-                # REPORT ROW (PLAN + SIGNAL)
+                # REPORT ROW
                 # ----------------------------
                 valid_rows.append({
                     "symbol": symbol,
                     "strategy": signal["strategy"],
                     "bias": signal.get("bias"),
-                    "score": signal["score"],
+                    "direction": plan["direction"],
+                    "order_type": plan["order_type"],
                     "entry": plan["entry"],
                     "sl": plan["sl"],
                     "target": plan.get("target") or plan.get("target1"),
@@ -222,9 +247,9 @@ class WatchlistEngine:
             )
 
             logger.info(
-                f"📨 Scan complete → "
-                f"VALID={len(valid_rows)} "
-                f"REJECTED={len(rejected_rows)} "
+                f"📨 Scan Summary → "
+                f"VALID={len(valid_rows)} | "
+                f"REJECTED={len(rejected_rows)} | "
                 f"SKIPPED={len(skipped_rows)}"
             )
 
