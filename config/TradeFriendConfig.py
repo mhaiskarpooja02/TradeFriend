@@ -2,7 +2,7 @@
 SWING_CAPITAL = 10000
 RISK_PERCENT = 1.0
 ENTRY_TOLERANCE = 0.01   # 1%
-
+SL_BUFFER_PCT = 0.0015   # 0.15% safety buffer
 # ---------------- API / BROKER ----------------
 REQUEST_DELAY_SEC = 1.2
 ERROR_COOLDOWN_SEC = 5
@@ -33,3 +33,16 @@ HARD_EXIT_R_MULTIPLE = 2.0
 # ---------------- SAFETY ----------------
 DISABLE_NEW_TRADES = False
 SL_ON_CLOSE = True
+
+# Partial entry support
+PARTIAL_ENTRY_ENABLED = True
+
+# Qty to place on first partial entry
+PARTIAL_ENTRY_QTY = 1
+
+MORNING_CONFIRM_TIMES = [
+    (9, 16),
+    (9, 21),
+    (9, 26),
+    (9, 31),
+]

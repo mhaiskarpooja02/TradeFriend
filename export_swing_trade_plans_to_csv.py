@@ -71,6 +71,8 @@ def export_swing_trade_plans():
     cursor.execute("""
         SELECT *
         FROM swing_trade_plans
+        WHERE status != 'REJECTED'
+        AND date(created_on) = date('now')
         ORDER BY created_on DESC
     """)
 

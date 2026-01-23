@@ -4,13 +4,16 @@ from tkinter import ttk, StringVar
 from datetime import datetime, time
 
 from core.TradeFriendDataProvider import TradeFriendDataProvider
+from core.TradeFriendScheduler import TradeFriendScheduler
 from db.TradeFriendTradeRepo import TradeFriendTradeRepo
 from db.TradeFriendWatchlistRepo import TradeFriendWatchlistRepo
 from db.TradeFriendTradeHistoryRepo import TradeFriendTradeHistoryRepo
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
 from utils.TradeFriendManager import TradeFriendManager
 from Servieces.TradeFriendTradeViewService import TradeFriendTradeViewService
+from utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 class TradeFriendDashboard(ttk.Frame):
 
@@ -28,6 +31,13 @@ class TradeFriendDashboard(ttk.Frame):
 
         self.trade_mode = self.settings_repo.get_trade_mode()
         self.ltp_cache = {}
+
+        # ✅ BACKGROUND SCHEDULER
+        self.scheduler = TradeFriendScheduler(
+            manager=self.manager,
+            trade_mode=self.trade_mode
+        )
+        self.scheduler.start()
 
         self._build_ui()
         self.refresh_data()
@@ -71,12 +81,22 @@ class TradeFriendDashboard(ttk.Frame):
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=6, pady=6)
 
-        ttk.Button(bar, text="📊 Daily Scan",
-                   command=self.run_daily_scan).pack(side="left", padx=5)
-        ttk.Button(bar, text="🚀 Morning Confirm",
-                   command=self.run_morning_confirm).pack(side="left", padx=5)
-        ttk.Button(bar, text="📈 Monitor",
-                   command=self.run_monitor).pack(side="left", padx=5)
+        # ---------- Manual Automation ----------
+        self.manual_mode = StringVar(value="FULL")
+
+        ttk.Combobox(
+            bar,
+            textvariable=self.manual_mode,
+            values=["DAILYSCAN","DECISION", "MORNING", "FULL"],
+            width=12,
+            state="readonly"
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            bar,
+            text="🛠️ Run Manual",
+            command=self.run_manual_wrapper  
+        ).pack(side="left", padx=5)
 
         ttk.Button(bar, text="🔄 Refresh",
                    command=self.refresh_data).pack(side="right", padx=5)
@@ -159,6 +179,7 @@ class TradeFriendDashboard(ttk.Frame):
         try:
             watchlist = self.watchlist_repo.fetch_all()
             active = self.trade_repo.fetch_active_trades()
+            history = self.trade_history_repo.fetch_recent_closed()
 
             # ---------------- KPI (ACTIVE ONLY) ----------------
             total_pnl = 0.0
@@ -196,6 +217,7 @@ class TradeFriendDashboard(ttk.Frame):
             # ---------------- UI THREAD ----------------
             self.after(0, lambda: self._update_watchlist(watchlist))
             self.after(0, lambda: self._update_active_trades(active))
+            self.after(0, lambda: self._update_history(history))
             self.after(
                 0,
                 lambda: self._update_kpis(
@@ -335,7 +357,7 @@ class TradeFriendDashboard(ttk.Frame):
 
         # ---------------- Market Open ----------------
         try:
-            ltp = self.provider.get_ltp(symbol)
+            ltp = self.provider.get_ltp_byLtp(symbol)
             if ltp:
                 #self.ltp_cache[symbol] = (ltp, now)
                 return ltp
@@ -378,6 +400,12 @@ class TradeFriendDashboard(ttk.Frame):
             daemon=True
         ).start()
 
+    def run_decision_runner(self):
+        """
+        Run DecisionRunner in background thread from UI
+        """
+        self._run_bg(lambda: self.manager.tf_decision_runner())
+
     # =====================================================
     # LOADING
     # =====================================================
@@ -385,7 +413,58 @@ class TradeFriendDashboard(ttk.Frame):
     def _start_loading(self, msg):
         self.loading_var.set(msg)
         self.progress.start(10)
-
     def _stop_loading(self):
         self.progress.stop()
         self.loading_var.set("")
+
+    # ---------------- Wrapper to pass selected flow ----------------
+    def run_manual_wrapper(self):
+        """
+        Gets the selected flow from combobox and calls run_manual.
+        """
+        flow = self.manual_mode.get()
+        self.run_manual(flow=flow, force=True)
+
+    def run_manual(self, flow: str, force: bool = False):
+        """
+        Run manual automation based on the selected flow.
+    
+        flow options:
+            - DAILYSCAN
+            - DECISION
+            - MORNING
+            - FULL
+        """
+        logger.info(
+            f"🛠 Manual run requested | flow={flow} | "
+            f"trade_mode={self.trade_mode} | force={force}"
+        )
+    
+        def task():
+            if flow == "DAILYSCAN":
+                self.manager.tf_daily_scan(self.trade_mode)
+    
+            elif flow == "DECISION":
+                self.manager.tf_decision_runner()
+    
+            elif flow == "MORNING":
+                self.manager.tf_morning_confirm(
+                    capital=100000,   # or pull from settings
+                    mode=self.trade_mode
+                )
+    
+            elif flow == "FULL":
+                # ✅ EXACT automated sequence
+                self.manager.tf_daily_scan(self.trade_mode)
+                self.manager.tf_decision_runner()
+                self.manager.tf_morning_confirm(
+                    capital=100000,
+                    mode=self.trade_mode
+                )
+    
+            else:
+                logger.warning(f"Unknown manual flow: {flow}")
+    
+        self._run_bg(task)
+
+

@@ -32,10 +32,22 @@ class AngelClient:
     Handles Angel One SmartAPI login, LTP fetch, and historical data.
     """
     # ================================================================================
+    
+    _instance = None
+    _initialized = False
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        """Initialize and login to Angel One SmartAPI."""
+        if self._initialized:
+            return
         self.smart_api = None
         self.login()
+        self._initialized = True
+
 
     # ================================================================================
     def login(self):
@@ -57,12 +69,27 @@ class AngelClient:
     def get_ltp(self, resolved_symbol: dict):
         """Fetch LTP for a single resolved symbol."""
         try:
+            logger.info(f"Fetched LTP for {resolved_symbol['symbol']}")
             data = self.smart_api.ltpData(
                 resolved_symbol["exchange"],
                 resolved_symbol["symbol"],
                 str(resolved_symbol["token"])
             )
+
+            if not data or not data.get("data"):
+                logger.warning(
+                    f"⚠️ Empty LTP payload from Angel | {resolved_symbol['symbol']}"
+                )
+                return None   # ⛔ NOT an exception
+        
             ltp = data["data"]["ltp"]
+
+            if not data or not data.get("data"):
+              logger.warning(
+                  f"⚠️ Empty LTP payload from Angel | {resolved_symbol['symbol']}"
+              )
+              return None   # ⛔ NOT an exception
+
             logger.info(f"Fetched LTP for {resolved_symbol['symbol']}: {ltp}")
             return ltp
         except Exception as e:

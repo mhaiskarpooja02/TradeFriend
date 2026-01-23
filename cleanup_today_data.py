@@ -147,10 +147,204 @@ def mark_todays_plans_as_planned():
     print("✅ Status update completed")
     print(f"   • Rows updated to PLANNED : {updated}")
 
+def delete_by_symbols(symbols):
+    """
+    Delete rows from:
+    - swing_trade_plans
+    - tradefriend_watchlist
+    - tradefriend_trades
+    based on symbol list
+    """
 
+    if not symbols:
+        print("⚠️ No symbols provided. Nothing to delete.")
+        return
+
+    placeholders = ",".join("?" for _ in symbols)
+
+    # -----------------------------
+    # DB_FILE (plans + watchlist)
+    # -----------------------------
+    if not os.path.exists(DB_FILE):
+        print("❌ Database not found:", DB_FILE)
+        return
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"DELETE FROM swing_trade_plans WHERE symbol IN ({placeholders});",
+        symbols
+    )
+    plans_deleted = cursor.rowcount
+
+    cursor.execute(
+        f"DELETE FROM tradefriend_watchlist WHERE symbol IN ({placeholders});",
+        symbols
+    )
+    watchlist_deleted = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    # -----------------------------
+    # DBTrade_FILE (trades)
+    # -----------------------------
+    if not os.path.exists(DBTrade_FILE):
+        print("❌ Trade DB not found:", DBTrade_FILE)
+        return
+
+    conn = sqlite3.connect(DBTrade_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"DELETE FROM tradefriend_trades WHERE symbol IN ({placeholders});",
+        symbols
+    )
+    trades_deleted = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    # -----------------------------
+    # Summary
+    # -----------------------------
+    print("🧹 Symbol-based cleanup completed")
+    print(f"   • Swing plans deleted    : {plans_deleted}")
+    print(f"   • Watchlist rows deleted : {watchlist_deleted}")
+    print(f"   • Trades deleted         : {trades_deleted}")
+
+    # -----------------------------
+    # Summary
+    # -----------------------------
     
+# ==================================================
+# LTP VALIDATION
+# ==================================================
+def validate_symbol_ltp_ready(provider, symbol, rejected):
+    """
+    READY-stage LTP validation.
+    Returns LTP or None
+    """
+    try:
+        ltp = provider.get_ltp_byLtp(symbol)
+
+        if ltp is None or not isinstance(ltp, (int, float)) or ltp <= 0:
+            rejected.append({
+                "symbol": symbol,
+                "reason": "Invalid LTP at READY stage"
+            })
+            return None
+
+        return ltp
+
+    except Exception:
+        rejected.append({
+            "symbol": symbol,
+            "reason": "LTP validation error"
+        })
+        return None
+
+
+# ==================================================
+# DELETE BY SYMBOLS (UNCHANGED LOGIC, CLEANED)
+# ==================================================
+def delete_by_symbols(symbols):
+    if not symbols:
+        print("⚠️ No symbols provided. Nothing to delete.")
+        return
+
+    placeholders = ",".join("?" for _ in symbols)
+
+    # ---------- MAIN DB ----------
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"DELETE FROM swing_trade_plans WHERE symbol IN ({placeholders});",
+        symbols
+    )
+    plans_deleted = cursor.rowcount
+
+    cursor.execute(
+        f"DELETE FROM tradefriend_watchlist WHERE symbol IN ({placeholders});",
+        symbols
+    )
+    watchlist_deleted = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    # ---------- TRADE DB ----------
+    conn = sqlite3.connect(DBTrade_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"DELETE FROM tradefriend_trades WHERE symbol IN ({placeholders});",
+        symbols
+    )
+    trades_deleted = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    print("🧹 Symbol-based cleanup completed")
+    print(f"   • Swing plans deleted    : {plans_deleted}")
+    print(f"   • Watchlist rows deleted : {watchlist_deleted}")
+    print(f"   • Trades deleted         : {trades_deleted}")
+
+
+# ==================================================
+# MAIN ORCHESTRATOR (ONLY FUNCTION YOU CALL)
+# ==================================================
+def validate_watchlist_symbols_and_cleanup(provider):
+    """
+    1. Load watchlist symbols
+    2. Validate LTP
+    3. Collect invalid symbols
+    4. Delete them from all tables
+    """
+
+    if not os.path.exists(DB_FILE):
+        print("❌ Database not found:", DB_FILE)
+        return
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT DISTINCT symbol FROM tradefriend_watchlist;")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        print("⚠️ Watchlist is empty")
+        return
+
+    rejected = []
+    symbols_to_delete = []
+
+    print(f"🔍 Validating {len(rows)} watchlist symbols...")
+
+    for (symbol,) in rows:
+        ltp = validate_symbol_ltp_ready(provider, symbol, rejected)
+
+        if ltp is None:
+            symbols_to_delete.append(symbol)
+
+    symbols_to_delete = list(set(symbols_to_delete))  # dedupe
+
+    if symbols_to_delete:
+        print("🧹 Symbols to delete:")
+        for s in symbols_to_delete:
+            print("   •", s)
+
+        delete_by_symbols(symbols_to_delete)
+    else:
+        print("✅ No invalid symbols found")
+
+    print("✅ Validation + cleanup completed")
 if __name__ == "__main__":
-    # cleanup_today_data()
+     cleanup_today_data()
     # remove_duplicate_rows()
 
     # ids = get_todays_trade_ids()
@@ -158,3 +352,15 @@ if __name__ == "__main__":
     # delete_todays_trades()
 
     # mark_todays_plans_as_planned()
+
+    # symbols_to_delete = [
+    #     "NACLIND-EQ",
+    #     "VENUSREM-EQ"
+        
+    # ]
+
+    # delete_by_symbols(symbols_to_delete)
+    # from core.TradeFriendDataProvider import TradeFriendDataProvider
+
+    # provider = TradeFriendDataProvider()
+    # validate_watchlist_symbols_and_cleanup(provider)

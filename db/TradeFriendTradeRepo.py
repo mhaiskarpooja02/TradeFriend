@@ -289,3 +289,32 @@ class TradeFriendTradeRepo:
         """
         row = self.cursor.execute(query, (symbol,)).fetchone()
         return row is not None
+
+    # -------------------------------------------------
+    # ENABLE HOLD MODE (AFTER PARTIAL BOOKING)
+    # -------------------------------------------------
+    def enable_hold_mode(self, trade_id: int):
+        """
+        Mark trade as HOLD after partial profit booking
+        """
+        self.cursor.execute(
+            """
+            UPDATE tradefriend_trades
+            SET
+                status = 'HOLD',
+                updated_on = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (trade_id,)
+        )
+        self.conn.commit()
+
+    # -------------------------------------------------
+    # READY TRADES (PRE-EXECUTION)
+    # -------------------------------------------------
+    def fetch_ready_trades(self):
+        return self.cursor.execute("""
+            SELECT *
+            FROM tradefriend_trades
+            WHERE status = 'READY'
+        """).fetchall()

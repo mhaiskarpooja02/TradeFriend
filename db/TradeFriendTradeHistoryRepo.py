@@ -102,10 +102,16 @@ class TradeFriendTradeHistoryRepo:
     # FETCH (Dashboard)
     # -------------------------------------------------
     def fetch_recent_closed(self, limit: int = 50):
-        self.cursor.execute("""
-            SELECT *
-            FROM tradefriend_trade_history
-            ORDER BY closed_on DESC
-            LIMIT ?
-        """, (limit,))
+        excluded = ("SYSTEM_RESET",)
+
+        placeholders = ",".join("?" * len(excluded))
+
+        self.cursor.execute(f"""
+        SELECT *
+        FROM tradefriend_trade_history
+        WHERE exit_reason NOT IN ({placeholders})
+        ORDER BY closed_on DESC
+        LIMIT ?
+        """, (*excluded, limit))
+        
         return self.cursor.fetchall()
