@@ -13,15 +13,14 @@ logger = get_logger(__name__)
 class TradeFriendOrderManagementService:
     """
     PURPOSE:
-    - Execute entry orders via brokers
-    - Maintain broker_trade lifecycle
-    - Multi-broker, retry-safe, audit-perfect
+    - Execute ENTRY orders only
+    - Persist broker executions
+    - Broker-agnostic, retry-safe
+    - PnL-agnostic (IMPORTANT)
     """
 
     def __init__(self):
         self.repo = TradeFriendBrokerTradeRepo()
-
-        # Broker adapters
         self.dhan = TradeFriendDhanOrderAdapter()
         self.angel = TradeFriendAngelOrderAdapter()
 
@@ -37,10 +36,11 @@ class TradeFriendOrderManagementService:
         price: float
     ) -> list[dict]:
         """
-        RETURNS: list of executions
+        RETURNS:
         [
             {
                 broker,
+                broker_trade_id,
                 filled_qty,
                 avg_price,
                 broker_order_id
@@ -48,15 +48,18 @@ class TradeFriendOrderManagementService:
         ]
         """
 
-        executions = []
+        executions: list[dict] = []
 
-        # PAPER MODE → SIMULATE SINGLE BROKER
+        # -------------------------------------------------
+        # PAPER MODE
+        # -------------------------------------------------
         if PAPER_TRADE:
-            broker_trade_id = self.repo.log_attempt(
+            broker_trade_id = self.repo.insert_broker_trade(
                 trade_id=trade_id,
                 broker="PAPER",
                 order_mode="PAPER",
                 symbol=symbol,
+                leg_type="ENTRY",
                 side=side,
                 qty=qty,
                 order_type="MARKET",
@@ -68,7 +71,7 @@ class TradeFriendOrderManagementService:
                 }
             )
 
-            self.repo.log_success(
+            self.repo.update_broker_trade_success(
                 broker_trade_id=broker_trade_id,
                 broker_order_id=f"PAPER-{broker_trade_id}",
                 response_payload={
@@ -79,6 +82,7 @@ class TradeFriendOrderManagementService:
 
             executions.append({
                 "broker": "PAPER",
+                "broker_trade_id": broker_trade_id,
                 "filled_qty": qty,
                 "avg_price": price,
                 "broker_order_id": f"PAPER-{broker_trade_id}"
@@ -86,14 +90,16 @@ class TradeFriendOrderManagementService:
 
             return executions
 
-        # LIVE MODE → MULTI BROKER
+        # -------------------------------------------------
+        # LIVE MODE
+        # -------------------------------------------------
         executions += self._try_angel(trade_id, symbol, qty, side)
         executions += self._try_dhan(trade_id, symbol, qty, side)
 
         return executions
 
     # =====================================================
-    # BROKER ROUTERS
+    # ANGEL ENTRY
     # =====================================================
     def _try_angel(self, trade_id, symbol, qty, side):
         executions = []
@@ -101,11 +107,12 @@ class TradeFriendOrderManagementService:
         if not self.angel.is_enabled():
             return executions
 
-        broker_trade_id = self.repo.log_attempt(
+        broker_trade_id = self.repo.insert_broker_trade(
             trade_id=trade_id,
             broker="ANGEL",
             order_mode="LIVE",
             symbol=symbol,
+            leg_type="ENTRY",
             side=side,
             qty=qty,
             order_type="MARKET"
@@ -118,7 +125,7 @@ class TradeFriendOrderManagementService:
 
             fill = self.angel.wait_for_fill(order["order_id"])
 
-            self.repo.log_success(
+            self.repo.update_broker_trade_success(
                 broker_trade_id,
                 broker_order_id=order["order_id"],
                 response_payload=fill
@@ -126,27 +133,36 @@ class TradeFriendOrderManagementService:
 
             executions.append({
                 "broker": "ANGEL",
+                "broker_trade_id": broker_trade_id,
                 "filled_qty": fill["filled_qty"],
                 "avg_price": fill["avg_price"],
                 "broker_order_id": order["order_id"]
             })
 
         except Exception as e:
-            self.repo.log_failure(broker_trade_id, str(e))
+            self.repo.update_broker_trade_failure(
+                broker_trade_id,
+                str(e)
+            )
+            logger.error(f"[ANGEL ENTRY FAILED] {symbol} → {e}")
 
         return executions
 
+    # =====================================================
+    # DHAN ENTRY
+    # =====================================================
     def _try_dhan(self, trade_id, symbol, qty, side):
         executions = []
 
         if not self.dhan.is_enabled():
             return executions
 
-        broker_trade_id = self.repo.log_attempt(
+        broker_trade_id = self.repo.insert_broker_trade(
             trade_id=trade_id,
             broker="DHAN",
             order_mode="LIVE",
             symbol=symbol,
+            leg_type="ENTRY",
             side=side,
             qty=qty,
             order_type="MARKET"
@@ -159,7 +175,7 @@ class TradeFriendOrderManagementService:
 
             fill = self.dhan.wait_for_fill(order["order_id"])
 
-            self.repo.log_success(
+            self.repo.update_broker_trade_success(
                 broker_trade_id,
                 broker_order_id=order["order_id"],
                 response_payload=fill
@@ -167,12 +183,17 @@ class TradeFriendOrderManagementService:
 
             executions.append({
                 "broker": "DHAN",
+                "broker_trade_id": broker_trade_id,
                 "filled_qty": fill["filled_qty"],
                 "avg_price": fill["avg_price"],
                 "broker_order_id": order["order_id"]
             })
 
         except Exception as e:
-            self.repo.log_failure(broker_trade_id, str(e))
+            self.repo.update_broker_trade_failure(
+                broker_trade_id,
+                str(e)
+            )
+            logger.error(f"[DHAN ENTRY FAILED] {symbol} → {e}")
 
         return executions

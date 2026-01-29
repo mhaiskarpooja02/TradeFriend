@@ -1,10 +1,10 @@
 {
   "daily_scan": {
-    "last_run_date": "2026-01-23",
+    "last_run_date": "2026-01-29",
     "force_run": false
   },
   "morning_confirm": {
-    "last_run_date": "2026-01-23",
+    "last_run_date": "2026-01-29",
     "last_run_slot": [
       9,
       31

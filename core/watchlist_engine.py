@@ -7,7 +7,10 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import talib
+
 from config.TradeFriendConfig import (
+    MIN_SCAN_CONFIDENCE,
     REQUEST_DELAY_SEC,
     ERROR_COOLDOWN_SEC,
     SWING_PLAN_EXPIRY_DAYS
@@ -115,65 +118,101 @@ class WatchlistEngine:
         skipped
     ):
         symbol = row["symbol"]
-
+    
+        logger.info(f"🚀 [{symbol}] _scan_symbol_safe → START")
+    
         try:
-            logger.info(f"{symbol} → Scan started")
-
-            # -------------------------------
-            # DATA FETCH (THROTTLED)
-            # -------------------------------
+            # ==================================================
+            # DATA FETCH
+            # ==================================================
+            logger.debug(f"📡 [{symbol}] Fetching daily data")
+    
             with self.api_semaphore:
                 time.sleep(REQUEST_DELAY_SEC)
                 df = self.provider.get_daily_data(
                     trading_symbol=row["trading_symbol"],
                     token=row["token"]
                 )
-
+    
             if df is None or df.empty:
-                rejected.append({"symbol": symbol, "reason": "No data"})
+                reason = "No data"
+                logger.warning(f"⛔ [{symbol}] REJECT → {reason}")
+                rejected.append({"symbol": symbol, "reason": reason})
                 return
-
-            # -------------------------------
+    
+            logger.debug(f"📈 [{symbol}] Data OK | rows={len(df)}")
+    
+            # ==================================================
             # READY LTP VALIDATION
-            # -------------------------------
+            # ==================================================
+            logger.debug(f"🔎 [{symbol}] Validating READY LTP")
+    
             ltp = self._validate_symbol_ltp_ready(row, rejected)
             if ltp is None:
+                logger.warning(f"⛔ [{symbol}] REJECT → LTP validation failed")
                 return
-
-            # -------------------------------
+    
+            logger.debug(f"💰 [{symbol}] LTP OK → {ltp}")
+    
+            # ==================================================
+            # ENGINE INDICATORS
+            # ==================================================
+            logger.debug(f"🧮 [{symbol}] Preparing scan indicators")
+            df = self._prepare_scan_indicators(df, symbol)
+    
+            # ==================================================
             # STRATEGY SCAN
-            # -------------------------------
+            # ==================================================
+            logger.debug(f"🧠 [{symbol}] Running strategy scanner")
+    
             signal = TradeFriendScanner(df, symbol).scan()
             if not signal:
-                rejected.append({"symbol": symbol, "reason": "No setup"})
+                reason = "No setup"
+                logger.info(f"🚫 [{symbol}] REJECT → {reason}")
+                rejected.append({"symbol": symbol, "reason": reason})
                 return
-
-            # -------------------------------
+    
+            logger.info(
+                f"✅ [{symbol}] SETUP FOUND | strategy={signal.get('strategy')} | bias={signal.get('bias')}"
+            )
+    
+            # ==================================================
             # ENTRY PLAN
-            # -------------------------------
+            # ==================================================
+            logger.debug(f"📐 [{symbol}] Building entry plan")
+    
             plan = TradeFriendSwingEntryPlanner(
                 df=df,
                 symbol=symbol,
                 strategy=signal["strategy"]
             ).build_plan()
-
+    
             if not plan:
-                rejected.append({"symbol": symbol, "reason": "Plan build failed"})
+                reason = "Plan build failed"
+                logger.error(f"❌ [{symbol}] REJECT → {reason}")
+                rejected.append({"symbol": symbol, "reason": reason})
                 return
-
-            # -------------------------------
-            # CONFIDENCE SCORING (SCAN TIME)
-            # -------------------------------
+    
+            logger.debug(
+                f"📝 [{symbol}] Plan built | entry={plan.get('entry')} | sl={plan.get('sl')} | target={plan.get('target') or plan.get('target1')}"
+            )
+    
+            # ==================================================
+            # CONFIDENCE SCORING
+            # ==================================================
+            logger.debug(f"📊 [{symbol}] Calculating confidence")
+    
             vol_avg = df["volume"].rolling(20).mean().iloc[-1]
-
+    
             try:
                 target = float(plan.get("target") or plan.get("target1") or 0)
                 entry = float(plan["entry"])
                 sl = float(plan["sl"])
                 rr = abs((target - entry) / (entry - sl))
-            except Exception:
+            except Exception as e:
+                logger.exception(f"⚠ [{symbol}] RR calculation failed: {e}")
                 rr = 0
-
+    
             scan_context = {
                 "htf_trend": signal.get("bias"),
                 "location": signal.get("strategy"),
@@ -184,44 +223,44 @@ class WatchlistEngine:
                 ),
                 "rr": rr
             }
-
+    
             confidence = self.confidence_scorer.score(scan_context)
-
+    
             logger.info(
-                f"📊 {symbol} | confidence={confidence} | rr={rr:.2f}"
+                f"📊 [{symbol}] CONFIDENCE={confidence} | RR={rr:.2f}"
             )
-
-            # -------------------------------
+    
+            # ==================================================
             # DUPLICATE TRADE GUARD
-            # -------------------------------
+            # ==================================================
             if symbol in traded_symbols:
-                skipped.append({"symbol": symbol, "reason": "Already traded"})
+                reason = "Already traded (active position exists)"
+                logger.warning(f"⏭ [{symbol}] SKIPPED → {reason}")
+                skipped.append({"symbol": symbol, "reason": reason})
                 return
-
-            # -------------------------------
+    
+            # ==================================================
             # WATCHLIST UPSERT
-            # -------------------------------
+            # ==================================================
+            logger.debug(f"👁️ [{symbol}] Upserting watchlist entry")
+    
             self.watchlist_repo.upsert({
                 "symbol": symbol,
                 "strategy": signal["strategy"],
                 "bias": signal.get("bias"),
                 "score": confidence
             })
-
-            # -------------------------------
-            # PLAN METADATA (LIFECYCLE)
-            # -------------------------------
+    
+            # ==================================================
+            # PLAN METADATA
+            # ==================================================
             plan.update({
                 "direction": signal.get("direction", "BUY"),
                 "order_type": signal.get("order_type", "MARKET"),
                 "trade_type": "SWING",
                 "carry_forward": 1,
                 "product_type": "CNC",
-
-                # confidence (CRITICAL)
                 "confidence": confidence,
-
-                # lifecycle
                 "status": "PLANNED",
                 "created_at": scan_date,
                 "expires_at": (
@@ -229,30 +268,43 @@ class WatchlistEngine:
                     + timedelta(days=SWING_PLAN_EXPIRY_DAYS)
                 ).strftime("%Y-%m-%d")
             })
-
-            # -------------------------------
-            # PLAN UPSERT (BETTER ENTRY ONLY)
-            # -------------------------------
+    
+            logger.debug(f"📦 [{symbol}] Plan metadata finalized")
+    
+            # ==================================================
+            # PLAN UPSERT DECISION
+            # ==================================================
             existing = self.swing_plan_repo.get_active_plan(symbol)
-
+    
             if existing:
                 old_entry = float(existing["entry"])
                 new_entry = float(plan["entry"])
-
+    
+                logger.info(
+                    f"🔁 [{symbol}] Existing plan found | old_entry={old_entry} | new_entry={new_entry}"
+                )
+    
                 if plan["direction"] == "BUY" and new_entry >= old_entry:
-                    skipped.append({"symbol": symbol, "reason": "Worse entry"})
+                    reason = "Worse entry than existing plan"
+                    logger.warning(f"⏭ [{symbol}] SKIPPED → {reason}")
+                    skipped.append({"symbol": symbol, "reason": reason})
                     return
-
+    
+                logger.info(f"✏️ [{symbol}] Updating existing plan (better entry)")
                 self.swing_plan_repo.update_plan(
                     plan_id=existing["id"],
                     new_plan=plan
                 )
+    
             else:
+                logger.info(f"🆕 [{symbol}] Saving NEW swing plan")
                 self.swing_plan_repo.save_plan(plan)
-
-            # -------------------------------
-            # VALID RESULT
-            # -------------------------------
+    
+            # ==================================================
+            # FINAL ACCEPT
+            # ==================================================
+            logger.info(f"🎯 [{symbol}] ACCEPTED → Added to VALID list")
+    
             valid.append({
                 "symbol": symbol,
                 "strategy": signal["strategy"],
@@ -264,13 +316,16 @@ class WatchlistEngine:
                 "confidence": confidence,
                 "scan_date": scan_date
             })
-
+    
             time.sleep(REQUEST_DELAY_SEC)
-
+    
         except Exception as e:
-            logger.exception(f"{symbol} failed: {e}")
+            logger.exception(f"🔥 [{symbol}] SCAN FAILED: {e}")
             time.sleep(ERROR_COOLDOWN_SEC)
-
+    
+        finally:
+            logger.info(f"🏁 [{symbol}] _scan_symbol_safe → END")
+    
     # ==================================================
     # MAIN RUN
     # ==================================================
@@ -332,7 +387,7 @@ class WatchlistEngine:
             TradeFriendInitialScanPdfGenerator().generate(
                 scan_date=scan_date,
                 rows=valid,
-                score_cutoff=7,
+                score_cutoff=MIN_SCAN_CONFIDENCE,
                 output_path=pdf_path
             )
 
@@ -362,7 +417,7 @@ class WatchlistEngine:
         try:
             logger.info(f"🔎 READY LTP check | {symbol}")
 
-            ltp = self.provider.get_ltp_byLtp(symbol)
+            ltp = self.provider.get_ltp_byLtp(symbol,allow_pre_market_fetch=True)
 
             if ltp is None or not isinstance(ltp, (int, float)) or ltp <= 0:
                 rejected.append({
@@ -380,3 +435,19 @@ class WatchlistEngine:
                 "reason": "LTP validation error"
             })
             return None
+        
+    # ==================================================
+    # SCAN-TIME INDICATORS (ENGINE OWNERSHIP)
+    # ==================================================
+
+    def _prepare_scan_indicators(self, df, symbol):
+        """
+        Indicators required outside TradeFriendScanner
+        """
+        close = df["close"].astype(float)
+
+        if "rsi" not in df.columns:
+            df["rsi"] = talib.RSI(close, timeperiod=14)
+            logger.debug(f"{symbol} → RSI computed for scan context")
+
+        return df

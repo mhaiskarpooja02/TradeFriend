@@ -5,6 +5,7 @@ from brokers.angel_client import AngelClient, getltp,init_client
 from utils.symbol_resolver import SymbolResolver
 from utils.logger import get_logger
 from config.TradeFriendConfig import ERROR_COOLDOWN_SEC, MAX_RETRIES, REQUEST_DELAY_SEC, RETRY_DELAY
+from datetime import datetime, time as dtime
 
 logger = get_logger(__name__)
 
@@ -24,7 +25,7 @@ class TradeFriendDataProvider:
         # REQUIRED STATE
         self._error_until = 0
         self._last_request_ts = 0
-
+        self._ltp_cache = {}
         logger.info("✅ DataProvider ready | throttle initialized")
 
     def get_daily_data(self, trading_symbol, token):
@@ -56,6 +57,24 @@ class TradeFriendDataProvider:
             return None
 
         return self._normalize_ohlc(df)
+    # --------------------------------------------------
+    # is_market_open
+    # --------------------------------------------------
+    def is_market_open(self) -> bool:
+        now = datetime.now().time()
+
+        market_open = dtime(9, 15)
+        market_close = dtime(15, 30)
+
+        is_open = market_open <= now <= market_close
+
+        logger.debug(
+            "🕒 Market check | now=%s | open=%s",
+            now.strftime("%H:%M"),
+            is_open
+        )
+
+        return is_open
 
     # --------------------------------------------------
     # DAILY FETCH (Swing)
@@ -140,50 +159,82 @@ class TradeFriendDataProvider:
     
         return df
     
-    
-    
-    def get_ltp_byLtp(self, symbol: str):
-       logger.info(f"📡 get_ltp CALLED | symbol={symbol}")
-    
+
+    def get_ltp_byLtp(self, symbol: str, allow_pre_market_fetch: bool = False):
+       logger.info(
+           f"📡 get_ltp CALLED | symbol={symbol} | allow_pre_market={allow_pre_market_fetch}"
+       )
+
+       now = time.time()
+       cached = self._ltp_cache.get(symbol)
+
+       # -----------------------------
+       # 🛑 Market closed handling
+       # -----------------------------
+    #    if not self.is_market_open() and not allow_pre_market_fetch:
+    #        if cached:
+    #            logger.debug(
+    #                f"📦 LTP cache hit (market closed) | {symbol} → {cached[0]}"
+    #            )
+    #            return cached[0]
+
+    #        logger.warning(f"⚠️ No cached LTP (market closed) | {symbol}")
+    #        return None
+
+       # -----------------------------
+       # ⏱ Cache valid?
+       # -----------------------------
+       if cached:
+           ltp, ts = cached
+           age = now - ts
+
+           if age < (REQUEST_DELAY_SEC * 60):
+               logger.debug(
+                   f"📦 LTP cache hit | {symbol} → {ltp} (age {int(age)}s)"
+               )
+               return ltp
+
+       # -----------------------------
+       # 📡 Fetch fresh LTP (allowed)
+       # -----------------------------
        for attempt in range(1, MAX_RETRIES + 1):
            try:
                self._throttle()
-    
+
                resolved = self.resolver.resolve_symbol(symbol)
                if not resolved:
                    logger.warning(f"⚠️ Symbol resolution failed | {symbol}")
-                   return 0.0
-    
+                   return cached[0] if cached else None
+
                ltp = getltp(resolved)
-    
-               # 🔑 KEY CHANGE
+
                if ltp is None:
-                   logger.warning(
-                       f"⚠️ LTP unavailable | symbol={symbol} | returning 0"
-                   )
-                   return 0.0
-    
-               return float(ltp)
-    
-           except RuntimeError as e:
-               # Broker cooldown → do NOT retry
-               logger.warning(f"🚫 Broker cooldown active | {symbol}")
-               return 0.0
-    
+                   logger.warning(f"⚠️ LTP unavailable | {symbol}")
+                   return cached[0] if cached else None
+
+               ltp = float(ltp)
+
+               self._ltp_cache[symbol] = (ltp, now)
+               return ltp
+
+           except RuntimeError:
+               logger.warning(f"🚫 Broker cooldown | {symbol}")
+               return cached[0] if cached else None
+
            except Exception as e:
                logger.warning(
-                   f"⚠️ LTP attempt {attempt}/{MAX_RETRIES} failed | symbol={symbol} | error={e}"
+                   f"⚠️ LTP attempt {attempt}/{MAX_RETRIES} failed | "
+                   f"symbol={symbol} | error={e}"
                )
-    
+
                if attempt < MAX_RETRIES:
                    time.sleep(RETRY_DELAY)
                else:
-                   logger.error(
-                       f"⛔ LTP failed after retries | symbol={symbol} | returning 0"
-                   )
-                   return 0.0
-
-
+                   logger.error(f"⛔ LTP failed after retries | {symbol}")
+                   return cached[0] if cached else None
+    
+    
+   
     def get_ltp(self, symbol: str):
         for attempt in range(1, MAX_RETRIES + 1):
             try:

@@ -96,7 +96,7 @@ class TradeFriendScheduler:
         return self._in_range(dtime(9, 17), dtime(9, 32))
 
     def is_trigger_engine_time(self):
-        return self._in_range(dtime(9, 16), dtime(15, 25))
+        return self._in_range(dtime(9, 16), dtime(23, 25))
 
     # ==================================================
     # MAIN LOOP
@@ -128,7 +128,7 @@ class TradeFriendScheduler:
                 # 1.5️⃣ DECISION RUNNER (ONCE)
                 # ----------------------------------------------
                 if self.is_decision_runner_time():
-                    # if self._decision_done_date != today:
+                    if self._decision_done_date != today:
                         logger.info("🧠 Running DecisionRunner (once)")
                         runner = TradeFriendDecisionRunner()
                         runner.run()
@@ -145,15 +145,14 @@ class TradeFriendScheduler:
                 #    (Minute-protected, all day)
                 # ----------------------------------------------
                 if self.is_trigger_engine_time():
+                    logger.info("🧠 Started Running Trigger engine monitor (once)")
                     if self._last_trigger_minute != minute_key:
 
                         # ---- ENTRY ENGINE ----
                         self.manager.tf_trigger_engine()
 
                         # ---- EXIT / MONITOR ----
-                        monitor = TradeFriendSwingTradeMonitor(
-                            paper_trade=(self._get_trade_mode() == "PAPER")
-                        )
+                        monitor = TradeFriendSwingTradeMonitor()
                         monitor.run()
 
                         self._last_trigger_minute = minute_key

@@ -11,6 +11,7 @@ from db.TradeFriendTradeHistoryRepo import TradeFriendTradeHistoryRepo
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
 from utils.TradeFriendManager import TradeFriendManager
 from Servieces.TradeFriendTradeViewService import TradeFriendTradeViewService
+from datetime import datetime, time as dtime, timedelta
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,9 +29,13 @@ class TradeFriendDashboard(ttk.Frame):
 
         self.manager = TradeFriendManager()
         self.provider = TradeFriendDataProvider()
-
+        
         self.trade_mode = self.settings_repo.get_trade_mode()
         self.ltp_cache = {}
+
+        # 🕒 5-MIN TRIGGER STATE
+        self._last_trigger_minute = None
+        self._refresh_check_ms = 20 * 1000  # check every 20 sec
 
         # ✅ BACKGROUND SCHEDULER
         self.scheduler = TradeFriendScheduler(
@@ -38,9 +43,12 @@ class TradeFriendDashboard(ttk.Frame):
             trade_mode=self.trade_mode
         )
         self.scheduler.start()
-
+        
         self._build_ui()
         self.refresh_data()
+
+        # ⏱️ START AUTO REFRESH LOOP
+        self._start_refresh_timer()
 
     # =====================================================
     # UI
@@ -53,13 +61,24 @@ class TradeFriendDashboard(ttk.Frame):
         loading_frame = ttk.Frame(self)
         loading_frame.pack(fill="x", padx=6)
 
-        ttk.Label(loading_frame, textvariable=self.loading_var,
-                  foreground="blue").pack(side="left", padx=6)
+        ttk.Label(
+            loading_frame,
+            textvariable=self.loading_var,
+            foreground="blue"
+        ).pack(side="left", padx=6)
 
         self.progress = ttk.Progressbar(
             loading_frame, mode="indeterminate", length=200
         )
         self.progress.pack(side="left", padx=6)
+
+        # ---------- Refresh Status ----------
+        self.refresh_status = StringVar(value="⏳ Waiting for market...")
+        ttk.Label(
+            self,
+            textvariable=self.refresh_status,
+            foreground="gray"
+        ).pack(anchor="w", padx=8)
 
         # ---------- KPI ----------
         self.kpi_frame = ttk.Frame(self)
@@ -71,8 +90,12 @@ class TradeFriendDashboard(ttk.Frame):
             "active", "profit", "loss", "pnl"
         ]:
             lbl = ttk.Label(
-                self.kpi_frame, text="--", background="white",
-                anchor="center", font=("Segoe UI", 11, "bold"), padding=8
+                self.kpi_frame,
+                text="--",
+                background="white",
+                anchor="center",
+                font=("Segoe UI", 11, "bold"),
+                padding=8
             )
             lbl.pack(side="left", expand=True, fill="x", padx=4)
             self.kpi_labels[key] = lbl
@@ -81,13 +104,12 @@ class TradeFriendDashboard(ttk.Frame):
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=6, pady=6)
 
-        # ---------- Manual Automation ----------
         self.manual_mode = StringVar(value="FULL")
 
         ttk.Combobox(
             bar,
             textvariable=self.manual_mode,
-            values=["DAILYSCAN","DECISION", "MORNING", "FULL"],
+            values=["DAILYSCAN", "DECISION", "MORNING", "FULL"],
             width=12,
             state="readonly"
         ).pack(side="left", padx=5)
@@ -95,11 +117,14 @@ class TradeFriendDashboard(ttk.Frame):
         ttk.Button(
             bar,
             text="🛠️ Run Manual",
-            command=self.run_manual_wrapper  
+            command=self.run_manual_wrapper
         ).pack(side="left", padx=5)
 
-        ttk.Button(bar, text="🔄 Refresh",
-                   command=self.refresh_data).pack(side="right", padx=5)
+        ttk.Button(
+            bar,
+            text="🔄 Refresh",
+            command=self.refresh_data
+        ).pack(side="right", padx=5)
 
         self.mode_btn = ttk.Button(bar, command=self.toggle_trade_mode)
         self.mode_btn.pack(side="right", padx=5)
@@ -120,6 +145,7 @@ class TradeFriendDashboard(ttk.Frame):
         self._build_watchlist()
         self._build_trades()
         self._build_history()
+
 
     # =====================================================
     # TABLES
@@ -340,9 +366,9 @@ class TradeFriendDashboard(ttk.Frame):
 
 
     def _get_ltp_cached(self, symbol):
-        # now = datetime.now()
-        # weekday = now.weekday()   # 0=Mon, 6=Sun
-        # current_time = now.time()
+        now = datetime.now()
+        weekday = now.weekday()   # 0=Mon, 6=Sun
+        current_time = now.time()
 
         # market_closed = (
         #     weekday in (5, 6) or                         # Sat, Sun
@@ -359,7 +385,7 @@ class TradeFriendDashboard(ttk.Frame):
         try:
             ltp = self.provider.get_ltp_byLtp(symbol)
             if ltp:
-                #self.ltp_cache[symbol] = (ltp, now)
+                self.ltp_cache[symbol] = (ltp, now)
                 return ltp
         except Exception:
             pass
@@ -405,7 +431,7 @@ class TradeFriendDashboard(ttk.Frame):
         Run DecisionRunner in background thread from UI
         """
         self._run_bg(lambda: self.manager.tf_decision_runner())
-
+    
     # =====================================================
     # LOADING
     # =====================================================
@@ -416,6 +442,114 @@ class TradeFriendDashboard(ttk.Frame):
     def _stop_loading(self):
         self.progress.stop()
         self.loading_var.set("")
+
+     # =====================================================
+    # TIME HELPERS
+    # =====================================================
+
+    def _now(self):
+        return datetime.now()
+
+    def is_trigger_engine_time(self):
+        now = self._now().time()
+        return dtime(9, 16) <= now <= dtime(15, 25)
+
+    def _five_minute_key(self):
+        now = self._now()
+        minute_bucket = (now.minute // 5) * 5
+        return now.replace(minute=minute_bucket, second=0, microsecond=0)
+    
+    # =====================================================
+    # AUTO REFRESH LOOP
+    # =====================================================
+
+    def _start_refresh_timer(self):
+        self.after(self._refresh_check_ms, self._refresh_timer_tick)
+
+    def _refresh_timer_tick(self):
+        now = self._now()
+
+        if not self.is_trigger_engine_time():
+            self.refresh_status.set("🚫 Market closed — auto refresh paused")
+            self.after(self._refresh_check_ms, self._refresh_timer_tick)
+            return
+
+        minute_key = self._five_minute_key()
+
+        if self._last_trigger_minute != minute_key:
+            self._last_trigger_minute = minute_key
+
+            self.refresh_status.set(
+                f"🔄 Refreshing… ({minute_key.strftime('%H:%M')})"
+            )
+
+            threading.Thread(
+                target=self._refresh_active_trades_only,
+                daemon=True
+            ).start()
+        else:
+            self._update_refresh_label()
+
+        self.after(self._refresh_check_ms, self._refresh_timer_tick)
+
+    def _update_refresh_label(self):
+        last = self._last_trigger_minute
+        if not last:
+            return
+
+        next_refresh = last + timedelta(minutes=5)
+        self.refresh_status.set(
+            f"🕒 Last: {last.strftime('%H:%M')}  |  "
+            f"⏭ Next: {next_refresh.strftime('%H:%M')}"
+        )
+
+    # =====================================================
+    # DATA REFRESH (ACTIVE ONLY)
+    # =====================================================
+
+    def _refresh_active_trades_only(self):
+        try:
+            active = self.trade_repo.fetch_active_trades()
+
+            total_pnl = 0.0
+            win = 0
+            loss = 0
+
+            for row in active:
+                t = dict(row)
+                symbol = t.get("symbol")
+                entry = t.get("entry")
+                qty = t.get("qty")
+
+                if not symbol or entry is None or qty is None:
+                    continue
+
+                ltp = self._get_ltp_cached(symbol)
+                if ltp is None:
+                    continue
+
+                pnl = (ltp - entry) * qty
+                total_pnl += pnl
+
+                if pnl > 0:
+                    win += 1
+                elif pnl < 0:
+                    loss += 1
+
+            self.after(0, lambda: self._update_active_trades(active))
+            self.after(
+                0,
+                lambda: self._update_kpis(
+                    total_pnl=total_pnl,
+                    active=len(active),
+                    win=win,
+                    loss=loss
+                )
+            )
+            self.after(0, self._update_refresh_label)
+
+        except Exception as e:
+            logger.error(f"❌ Active refresh failed: {e}")
 
     # ---------------- Wrapper to pass selected flow ----------------
     def run_manual_wrapper(self):

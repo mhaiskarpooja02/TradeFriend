@@ -47,14 +47,14 @@ class TradeFriendInitialScanPdfGenerator:
                 printed_any = True
             else:
                 for r in rows:
-                    raw_score = r.get("score")
+                    raw_confidencescore = r.get("confidence")
 
                     try:
-                        score = int(float(raw_score))
+                        confidencescore = int(float(raw_confidencescore))
                     except (TypeError, ValueError):
                         score = 0
 
-                    if score < score_cutoff:
+                    if confidencescore < score_cutoff:
                         continue
 
                     printed_any = True
@@ -63,7 +63,7 @@ class TradeFriendInitialScanPdfGenerator:
                         f"{r.get('symbol','-')} | "
                         f"{r.get('strategy','-')} | "
                         f"{r.get('bias','-')} | "
-                        f"Score: {score} | "
+                        f"Score: {confidencescore } | "
                         f"E:{r.get('entry','-')} "
                         f"SL:{r.get('sl','-')} "
                         f"T:{r.get('target','-')}"

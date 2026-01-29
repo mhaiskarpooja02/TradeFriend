@@ -2,9 +2,9 @@ import sqlite3
 import os
 import logging
 from datetime import datetime, date
+
 from db.TradeFriendTradeHistoryRepo import TradeFriendTradeHistoryRepo
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
-
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +16,10 @@ os.makedirs(DB_FOLDER, exist_ok=True)
 class TradeFriendTradeRepo:
     """
     PURPOSE:
-    - Persist ACTIVE swing trades only
-    - Lock / Release swing capital safely
-    - Handle partial exits
-    - Archive trades on final exit
+    - Persist ACTIVE trades only
+    - Lock / release swing capital safely
+    - Handle PARTIAL exits
+    - Archive trades on FINAL exit
     """
 
     def __init__(self):
@@ -27,21 +27,22 @@ class TradeFriendTradeRepo:
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
 
-        self._ensure_table()
-        self._ensure_columns()
+        self._create_table()
 
         self.history_repo = TradeFriendTradeHistoryRepo()
         self.settings_repo = TradeFriendSettingsRepo()
 
     # -------------------------------------------------
-    # TABLE & MIGRATION
+    # TABLE (ACTIVE ONLY)
     # -------------------------------------------------
-    def _ensure_table(self):
+    def _create_table(self):
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS tradefriend_trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
 
                 symbol TEXT NOT NULL,
+                side TEXT NOT NULL DEFAULT 'BUY',
+
                 entry REAL NOT NULL,
                 sl REAL NOT NULL,
                 trailing_sl REAL,
@@ -49,107 +50,72 @@ class TradeFriendTradeRepo:
 
                 qty INTEGER NOT NULL,
                 initial_qty INTEGER NOT NULL,
+                remaining_qty INTEGER NOT NULL,
 
                 position_value REAL NOT NULL,
                 risk_amount REAL,
 
                 confidence REAL DEFAULT 0,
-                status TEXT DEFAULT 'OPEN',
-
+                status TEXT DEFAULT 'OPEN',      -- OPEN / PARTIAL
                 hold_mode INTEGER DEFAULT 0,
-                entry_day TEXT,
 
-                created_on TEXT
+                entry_day TEXT,
+                created_on TEXT,
+                updated_at TEXT
             )
         """)
         self.conn.commit()
 
-    def _ensure_columns(self):
-        self._add_column("position_value", "REAL")
-        self._add_column("risk_amount", "REAL")
-        self._add_column("trailing_sl", "REAL")
-        self._add_column("initial_qty", "INTEGER")
-        self._add_column("hold_mode", "INTEGER DEFAULT 0")
-        self._add_column("entry_day", "TEXT")
-
-    def _add_column(self, column, col_type):
-        try:
-            self.cursor.execute(
-                f"ALTER TABLE tradefriend_trades ADD COLUMN {column} {col_type}"
-            )
-            self.conn.commit()
-        except sqlite3.OperationalError:
-            pass
-
     # -------------------------------------------------
-    # CREATE TRADE (LOCK CAPITAL ATOMICALLY)
+    # CREATE TRADE (LOCK CAPITAL)
     # -------------------------------------------------
-    def save_trade(self, trade: dict):
-        """
-        Insert ACTIVE trade and LOCK swing capital
-        (capital is locked BEFORE insert for safety)
-        """
-
+    def save_trade(self, trade: dict) -> int:
         position_value = trade["entry"] * trade["qty"]
         risk_amount = abs(trade["entry"] - trade["sl"]) * trade["qty"]
 
-        # 🔒 LOCK FIRST (fail-safe)
+        # 🔒 lock capital first
         self.settings_repo.adjust_available_swing_capital(-position_value)
 
         try:
             self.cursor.execute("""
                 INSERT INTO tradefriend_trades (
-                    symbol, entry, sl, trailing_sl,
-                    target, qty, initial_qty,
+                    symbol, side,
+                    entry, sl, trailing_sl, target,
+                    qty, initial_qty, remaining_qty,
                     position_value, risk_amount,
                     confidence, status,
                     hold_mode, entry_day,
                     created_on
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?, ?)
             """, (
                 trade["symbol"],
+                trade.get("side", "BUY"),
+
                 trade["entry"],
                 trade["sl"],
                 trade["sl"],
                 trade["target"],
+
                 trade["qty"],
                 trade["qty"],
+                trade["qty"],
+
                 position_value,
                 risk_amount,
                 trade.get("confidence", 0),
+
                 date.today().isoformat(),
                 datetime.now().isoformat()
             ))
 
-            trade_id = self.cursor.lastrowid
             self.conn.commit()
-
-            return trade_id
+            return self.cursor.lastrowid
 
         except Exception:
-            # 🔁 rollback capital if insert fails
+            # rollback capital if insert fails
             self.settings_repo.adjust_available_swing_capital(+position_value)
             raise
-
-    # -------------------------------------------------
-    # RISK MANAGER SUPPORT
-    # -------------------------------------------------
-    def count_open_trades(self) -> int:
-        cur = self.cursor.execute("""
-            SELECT COUNT(*)
-            FROM tradefriend_trades
-            WHERE status IN ('OPEN', 'PARTIAL')
-        """)
-        return cur.fetchone()[0]
-
-    def sum_open_position_value(self) -> float:
-        cur = self.cursor.execute("""
-            SELECT COALESCE(SUM(position_value), 0)
-            FROM tradefriend_trades
-            WHERE status IN ('OPEN', 'PARTIAL')
-        """)
-        return float(cur.fetchone()[0])
 
     # -------------------------------------------------
     # FETCH
@@ -161,63 +127,24 @@ class TradeFriendTradeRepo:
             WHERE status IN ('OPEN', 'PARTIAL')
         """).fetchall()
 
-    def fetch_active_trades(self, limit: int = 100):
-        rows = self.cursor.execute("""
+    def fetch_by_id(self, trade_id: int):
+        row = self.cursor.execute("""
             SELECT *
             FROM tradefriend_trades
-            WHERE status IN ('OPEN', 'PARTIAL')
-            ORDER BY created_on DESC
-            LIMIT ?
-        """, (limit,)).fetchall()
+            WHERE id = ?
+        """, (trade_id,)).fetchone()
 
-        logger.info(
-            "📦 fetch_active_trades | rows=%d | statuses=%s",
-            len(rows),
-            list({r["status"] for r in rows}) if rows else []
-        )
-
-        if rows:
-            logger.debug("📦 First active trade → %s", dict(rows[0]))
-
-        return rows
+        return dict(row) if row else None
 
     def has_open_trade(self, symbol: str) -> bool:
-        cur = self.cursor.execute("""
+        row = self.cursor.execute("""
             SELECT 1
             FROM tradefriend_trades
             WHERE symbol = ?
               AND status IN ('OPEN', 'PARTIAL')
-        """, (symbol,))
-        return cur.fetchone() is not None
-
-    # -------------------------------------------------
-    # PARTIAL EXIT (RELEASE PROPORTIONAL CAPITAL)
-    # -------------------------------------------------
-    def partial_exit(self, trade_id: int, exit_qty: int):
-        trade = self.cursor.execute(
-            "SELECT * FROM tradefriend_trades WHERE id = ?",
-            (trade_id,)
-        ).fetchone()
-
-        if not trade or exit_qty <= 0 or exit_qty >= trade["qty"]:
-            return
-
-        per_qty_value = trade["position_value"] / trade["initial_qty"]
-        release_amount = per_qty_value * exit_qty
-
-        # 🔓 RELEASE proportional capital
-        self.settings_repo.adjust_available_swing_capital(release_amount)
-
-        self.cursor.execute("""
-            UPDATE tradefriend_trades
-            SET
-                qty = qty - ?,
-                position_value = position_value - ?,
-                status = 'PARTIAL'
-            WHERE id = ?
-        """, (exit_qty, release_amount, trade_id))
-
-        self.conn.commit()
+            LIMIT 1
+        """, (symbol,)).fetchone()
+        return row is not None
 
     # -------------------------------------------------
     # SL / TRAILING SL
@@ -225,48 +152,85 @@ class TradeFriendTradeRepo:
     def update_sl(self, trade_id: int, new_sl: float):
         self.cursor.execute("""
             UPDATE tradefriend_trades
-            SET sl = ?, trailing_sl = ?
+            SET sl = ?,
+                trailing_sl = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """, (new_sl, new_sl, trade_id))
         self.conn.commit()
 
     # -------------------------------------------------
-    # FINAL EXIT (RELEASE + ARCHIVE)
+    # PARTIAL EXIT (ONLY METHOD)
     # -------------------------------------------------
-    def close_and_archive(self, trade_row, exit_price: float, exit_reason: str):
-        """
-        FINAL lifecycle step:
-        - Release remaining capital
-        - Archive trade
-        - Remove from active table
-        """
+    def mark_partial_exit(
+        self,
+        trade_id: int,
+        exit_qty: int,
+        exit_price: float
+    ) -> int | None:
+        trade = self.fetch_by_id(trade_id)
+        if not trade:
+            return None
 
-        if not trade_row:
+        remaining = trade["remaining_qty"]
+        if exit_qty <= 0 or exit_qty >= remaining:
+            return None
+
+        new_remaining = remaining - exit_qty
+
+        # 🔓 release proportional capital
+        per_qty_value = trade["position_value"] / remaining
+        released = per_qty_value * exit_qty
+
+        self.settings_repo.adjust_available_swing_capital(released)
+
+        self.cursor.execute("""
+            UPDATE tradefriend_trades
+            SET
+                remaining_qty = ?,
+                position_value = position_value - ?,
+                status = 'PARTIAL',
+                hold_mode = 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (new_remaining, released, trade_id))
+
+        self.conn.commit()
+        return new_remaining
+
+    # -------------------------------------------------
+    # FINAL EXIT → HISTORY
+    # -------------------------------------------------
+    def close_and_archive(
+        self,
+        trade_id: int,
+        exit_price: float,
+        exit_reason: str
+    ):
+        trade = self.fetch_by_id(trade_id)
+        if not trade:
             return
 
-        # 🔓 RELEASE remaining capital (always exact)
-        remaining_value = trade_row["position_value"]
-        self.settings_repo.adjust_available_swing_capital(remaining_value)
-
-        exit_time = datetime.now().isoformat()
-
-        # 📦 ARCHIVE trade
-        self.history_repo.archive_trade(
-            trade=trade_row,
-            exit_price=exit_price,
-            exit_reason=exit_reason,
-            closed_on=exit_time
+        # 🔓 release remaining capital
+        self.settings_repo.adjust_available_swing_capital(
+            trade["position_value"]
         )
 
-        # ❌ REMOVE from active table
+        self.history_repo.archive_trade(
+            trade=trade,
+            exit_price=exit_price,
+            exit_reason=exit_reason,
+            closed_on=datetime.now().isoformat()
+        )
+
         self.cursor.execute(
             "DELETE FROM tradefriend_trades WHERE id = ?",
-            (trade_row["id"],)
+            (trade_id,)
         )
         self.conn.commit()
 
     # -------------------------------------------------
-    # SYMBOL HELPERS (DASHBOARD / SCAN)
+    # SYMBOL HELPERS
     # -------------------------------------------------
     def get_all_symbols(self) -> set:
         rows = self.cursor.execute("""
@@ -277,44 +241,39 @@ class TradeFriendTradeRepo:
         return {r["symbol"] for r in rows}
     
     # -------------------------------------------------
-    # SYMBOL HELPERS (DASHBOARD / SCAN)
+    # fetch active Trade for Dashboard
     # -------------------------------------------------
-    def has_active_trade(self, symbol: str) -> bool:
-        query = """
-            SELECT 1
-            FROM swing_trades
-            WHERE symbol = ?
-              AND status IN ('PAPER', 'LIVE', 'OPEN', 'PARTIAL')
-            LIMIT 1;
+    def fetch_active_trades(self, limit: int = 100):
         """
-        row = self.cursor.execute(query, (symbol,)).fetchone()
-        return row is not None
+        Fetch active trades (OPEN / PARTIAL) ordered by most recent.
+        """
 
-    # -------------------------------------------------
-    # ENABLE HOLD MODE (AFTER PARTIAL BOOKING)
-    # -------------------------------------------------
-    def enable_hold_mode(self, trade_id: int):
-        """
-        Mark trade as HOLD after partial profit booking
-        """
-        self.cursor.execute(
+        rows = self.cursor.execute(
             """
-            UPDATE tradefriend_trades
-            SET
-                status = 'HOLD',
-                updated_on = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (trade_id,)
-        )
-        self.conn.commit()
-
-    # -------------------------------------------------
-    # READY TRADES (PRE-EXECUTION)
-    # -------------------------------------------------
-    def fetch_ready_trades(self):
-        return self.cursor.execute("""
             SELECT *
             FROM tradefriend_trades
-            WHERE status = 'READY'
-        """).fetchall()
+            WHERE status IN ('OPEN', 'PARTIAL')
+            ORDER BY created_on DESC
+            LIMIT ?
+            """,
+            (limit,)
+        ).fetchall()
+
+        statuses = list({r["status"] for r in rows}) if rows else []
+
+        logger.info(
+            "📦 fetch_active_trades | rows=%d | statuses=%s",
+            len(rows),
+            statuses
+        )
+
+        if rows:
+            logger.debug(
+                "📦 First active trade → %s",
+                dict(rows[0])
+            )
+
+        return rows
+
+    
+    def fetch_ready_trades(self): return self.cursor.execute(""" SELECT * FROM tradefriend_trades WHERE status = 'READY' """).fetchall()

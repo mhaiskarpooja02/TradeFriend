@@ -56,8 +56,7 @@ class TradeFriendManager:
         settings = TradeFriendSettingsRepo().fetch()
 
         engine = TradeFriendSwingTriggerEngine(
-            capital=settings["available_swing_capital"],
-            paper_trade=settings["trade_mode"] == "PAPER"
+            capital=settings["available_swing_capital"]
         )
         engine.run()
     # ------------------------
