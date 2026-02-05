@@ -39,11 +39,11 @@ class TradeFriendTradeRepo:
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS tradefriend_trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-
+                swing_plan_id INTEGER,               -- 🔑 future linkage
                 symbol TEXT NOT NULL,
                 side TEXT NOT NULL DEFAULT 'BUY',
 
-                entry REAL NOT NULL,
+                entry REAL  NULL,
                 sl REAL NOT NULL,
                 trailing_sl REAL,
                 target REAL NOT NULL,
@@ -54,6 +54,8 @@ class TradeFriendTradeRepo:
 
                 position_value REAL NOT NULL,
                 risk_amount REAL,
+                planned_entry REAL NOT NULL,
+                first_entry_time   TEXT,
 
                 confidence REAL DEFAULT 0,
                 status TEXT DEFAULT 'OPEN',      -- OPEN / PARTIAL
@@ -79,7 +81,9 @@ class TradeFriendTradeRepo:
         try:
             self.cursor.execute("""
                 INSERT INTO tradefriend_trades (
+                    swing_plan_id,
                     symbol, side,
+                    planned_entry,
                     entry, sl, trailing_sl, target,
                     qty, initial_qty, remaining_qty,
                     position_value, risk_amount,
@@ -87,11 +91,12 @@ class TradeFriendTradeRepo:
                     hold_mode, entry_day,
                     created_on
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', 0, ?, ?)
+                VALUES (?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
             """, (
+                trade["swing_plan_id"],
                 trade["symbol"],
                 trade.get("side", "BUY"),
-
+                trade["planned_entry"],
                 trade["entry"],
                 trade["sl"],
                 trade["sl"],
@@ -104,7 +109,7 @@ class TradeFriendTradeRepo:
                 position_value,
                 risk_amount,
                 trade.get("confidence", 0),
-
+                 trade.get("status", "READY"),
                 date.today().isoformat(),
                 datetime.now().isoformat()
             ))
@@ -277,3 +282,194 @@ class TradeFriendTradeRepo:
 
     
     def fetch_ready_trades(self): return self.cursor.execute(""" SELECT * FROM tradefriend_trades WHERE status = 'READY' """).fetchall()
+
+    # ----------------------------------------------
+    # 📊 END-OF-DAY ENTRY EXECUTION REPORT
+    # ----------------------------------------------
+    def fetch_entries_by_date(self, report_date: str):
+        """
+        Fetch trades with executed entries for given date.
+        """
+    
+        rows = self.cursor.execute(
+            """
+            SELECT *
+            FROM tradefriend_trades
+            WHERE entry_day = ?
+             
+            ORDER BY created_on ASC
+            """,
+            (report_date,)
+        ).fetchall()
+    
+        logger.info(
+            "📊 fetch_entries_by_date | date=%s | rows=%d",
+            report_date,
+            len(rows)
+        )
+    
+        if rows:
+            logger.debug(
+                "📊 First entry execution → %s",
+                dict(rows[0])
+            )
+    
+        return rows
+    
+    # ----------------------------------------------
+    # 📊 END-OF-DAY ENTRY EXECUTION REPORT
+    # ----------------------------------------------
+    
+    def count_open_trades(self) -> int:
+        """
+        Count active trades (OPEN / PARTIAL).
+        """
+        cur = self.cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM tradefriend_trades
+            WHERE status IN ('OPEN', 'PARTIAL')
+            """
+        )
+        return cur.fetchone()[0]
+
+
+    def sum_open_position_value(self) -> float:
+        """
+        Sum position value of active trades (OPEN / PARTIAL).
+        """
+        cur = self.cursor.execute(
+            """
+            SELECT COALESCE(SUM(position_value), 0)
+            FROM tradefriend_trades
+            WHERE status IN ('OPEN', 'PARTIAL')
+            """
+        )
+        return float(cur.fetchone()[0])
+
+    # -------------------------------------------------
+    # INVALIDATE TRADE (MISSED ENTRY)
+    # -------------------------------------------------
+    def invalidate_trade(self, trade_id: int, reason: str, status: str):
+        self.cursor.execute("""
+            UPDATE tradefriend_trades
+            SET status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (status, trade_id))
+        self.conn.commit()
+
+    # -------------------------------------------------
+    # UPDATE ENTRY FILL
+    # -------------------------------------------------
+    def update_entry_fill(
+        self,
+        trade_id: int,
+        fill_qty: int,
+        fill_price: float
+    ):
+        trade = self.fetch_by_id(trade_id)
+        if not trade:
+            return
+
+        remaining = max(trade["remaining_qty"] - fill_qty, 0)
+
+        self.cursor.execute("""
+            UPDATE tradefriend_trades
+            SET entry = ?,
+                remaining_qty = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (fill_price, remaining, trade_id))
+        self.conn.commit()
+
+    # -------------------------------------------------
+       # MARK TRADE OPEN
+    # -------------------------------------------------
+    
+    def mark_open(self, trade_id: int, avg_entry: float, entry_day: str, status: str):
+        self.cursor.execute("""
+            UPDATE tradefriend_trades
+            SET entry = ?,
+                entry_day = ?,
+                status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (avg_entry, entry_day, status, trade_id))
+
+
+    def update_hold_mode(self, trade_id: int, hold_mode: int):
+        """
+        Update trade hold state:
+        0 = OPEN
+        1 = PARTIAL_BOOKED
+        2 = RUNNER
+        """
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE tradefriend_trades
+                SET hold_mode = ?
+                WHERE id = ?
+                """,
+                (hold_mode, trade_id)
+            )
+
+
+
+    def update_status(self, trade_id: int, status: str):
+        """
+        PURPOSE:
+        - Update trade lifecycle state only
+        - Used for READY → PARTIAL transitions
+        """
+        self.cursor.execute(
+            """
+            UPDATE tradefriend_trades
+            SET status = ?
+            WHERE id = ?
+            """,
+            (status, trade_id)
+        )
+        self.conn.commit()
+
+
+    def rebuild_trade(self, trade: dict):
+        self.cursor.execute("""
+            INSERT INTO tradefriend_trades (
+                id,
+                swing_plan_id,
+                symbol, side,
+                planned_entry,
+                entry, sl, trailing_sl, target,
+                qty, initial_qty, remaining_qty,
+                position_value, risk_amount,
+                confidence, status,
+                hold_mode, entry_day,
+                created_on, updated_at
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            trade["id"],
+            trade["swing_plan_id"],
+            trade["symbol"],
+            trade["side"],
+            trade["planned_entry"],
+            trade["entry"],
+            trade["sl"],
+            trade["trailing_sl"],
+            trade["target"],
+            trade["qty"],
+            trade["initial_qty"],
+            trade["remaining_qty"],
+            trade["position_value"],
+            trade["risk_amount"],
+            trade["confidence"],
+            trade["status"],
+            trade["hold_mode"],
+            trade["entry_day"],
+            trade["created_on"],
+            trade["updated_at"]
+        ))
+
+        self.conn.commit()   # 🔥 THIS IS REQUIRED

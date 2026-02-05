@@ -24,7 +24,8 @@ def cleanup_today_data():
     # -----------------------------
     cursor.execute("""
         DELETE FROM tradefriend_watchlist
-        WHERE date(scanned_on) < date('now', '-3 days');
+        WHERE date(scanned_on) = date('now');
+                  
     """)
     watchlist_deleted = cursor.rowcount
 
@@ -33,7 +34,7 @@ def cleanup_today_data():
     # -----------------------------
     cursor.execute("""
         DELETE FROM swing_trade_plans
-        WHERE date(created_on) < date('now', '-3 days');
+        WHERE date(created_on) = date('now');
     """)
     plans_deleted = cursor.rowcount
 
@@ -344,14 +345,14 @@ def validate_watchlist_symbols_and_cleanup(provider):
 
     print("✅ Validation + cleanup completed")
 if __name__ == "__main__":
-    #  cleanup_today_data()
+     cleanup_today_data()
     # remove_duplicate_rows()
 
     # ids = get_todays_trade_ids()
     # delete_trades_by_ids(ids)
     # delete_todays_trades()
 
-     mark_todays_plans_as_planned()
+    #  mark_todays_plans_as_planned()
 
     # symbols_to_delete = [
     #     "NACLIND-EQ",

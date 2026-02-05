@@ -6,6 +6,7 @@ from utils.symbol_resolver import SymbolResolver
 from utils.logger import get_logger
 from config.TradeFriendConfig import ERROR_COOLDOWN_SEC, MAX_RETRIES, REQUEST_DELAY_SEC, RETRY_DELAY
 from datetime import datetime, time as dtime
+from Servieces.TradeFriendMarketTimeService import TradeFriendMarketTimeService as MTS
 
 logger = get_logger(__name__)
 
@@ -57,24 +58,7 @@ class TradeFriendDataProvider:
             return None
 
         return self._normalize_ohlc(df)
-    # --------------------------------------------------
-    # is_market_open
-    # --------------------------------------------------
-    def is_market_open(self) -> bool:
-        now = datetime.now().time()
-
-        market_open = dtime(9, 15)
-        market_close = dtime(15, 30)
-
-        is_open = market_open <= now <= market_close
-
-        logger.debug(
-            "🕒 Market check | now=%s | open=%s",
-            now.strftime("%H:%M"),
-            is_open
-        )
-
-        return is_open
+    
 
     # --------------------------------------------------
     # DAILY FETCH (Swing)
@@ -161,9 +145,7 @@ class TradeFriendDataProvider:
     
 
     def get_ltp_byLtp(self, symbol: str, allow_pre_market_fetch: bool = False):
-       logger.info(
-           f"📡 get_ltp CALLED | symbol={symbol} | allow_pre_market={allow_pre_market_fetch}"
-       )
+       
 
        now = time.time()
        cached = self._ltp_cache.get(symbol)
@@ -171,15 +153,15 @@ class TradeFriendDataProvider:
        # -----------------------------
        # 🛑 Market closed handling
        # -----------------------------
-    #    if not self.is_market_open() and not allow_pre_market_fetch:
-    #        if cached:
-    #            logger.debug(
-    #                f"📦 LTP cache hit (market closed) | {symbol} → {cached[0]}"
-    #            )
-    #            return cached[0]
+       if not  MTS.is_LTPmarket_open() and not allow_pre_market_fetch:
+           if cached:
+               logger.debug(
+                   f"📦 LTP cache hit (market closed) | {symbol} → {cached[0]}"
+               )
+               return cached[0]
 
-    #        logger.warning(f"⚠️ No cached LTP (market closed) | {symbol}")
-    #        return None
+           logger.warning(f"⚠️ No cached LTP (market closed) | {symbol}")
+           return None
 
        # -----------------------------
        # ⏱ Cache valid?

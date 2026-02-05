@@ -7,8 +7,10 @@ from core.watchlist_engine import WatchlistEngine
 from core.TradeFriendSwingMonitor import TradeFriendSwingTradeMonitor
 from core.TradeFriendSwingTriggerEngine import TradeFriendSwingTriggerEngine
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
+from reports.entry_execution.TradeFriendEntryExecutionReportService import TradeFriendEntryExecutionReportService
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 
 class TradeFriendManager:
@@ -70,3 +72,18 @@ class TradeFriendManager:
         runner = TradeFriendDecisionRunner()
         runner.run()
         logger.info("✅ TradeFriend DecisionRunner completed")
+
+    # ----------------------------------------------
+    # 📊 END-OF-DAY REPORT ORCHESTRATION
+    #
+    # - Generates all EOD trade reports
+    # - Entry execution summary (PDF)
+    # - Sends reports via static mail service
+    # - Invoked ONLY by Scheduler (time-guarded)
+    # ----------------------------------------------
+    def tf_generate_eod_reports(self, report_date: str):
+        logger.info("🧠 TradeFriend EOD Report generation started")
+        TradeFriendEntryExecutionReportService.generate_and_send(
+            report_date
+        )
+        logger.info("✅ TradeFriend EOD Report generation completed")

@@ -38,39 +38,42 @@ class TradeFriendDailyScanReportService:
         if not EMAIL_Enabled:
             logger.info("📧 Email disabled — skipping daily scan report")
             return
-
+    
         if not attachments:
             logger.warning("📧 No attachments found — skipping email")
             return
-
+    
         valid_files = [f for f in attachments if os.path.exists(f)]
         if not valid_files:
             logger.warning("📧 Attachments missing on disk — skipping email")
             return
-
+    
+        # 🔑 Normalize sqlite rows → dict
+        scan_results = [dict(r) for r in scan_results]
+    
         subject = f"📊 TradeFriend Daily Scan Report — {scan_date}"
-
+    
         symbols = [r.get("symbol", "") for r in scan_results]
         strategies = sorted(set(r.get("strategy", "") for r in scan_results))
-
+    
         body = f"""
-TradeFriend — Daily Scan Report
-Date: {scan_date}
-
-Total Qualified Stocks: {len(scan_results)}
-Strategies Triggered: {', '.join(strategies)}
-
-Symbols:
-{', '.join(symbols)}
-
-Attachments:
-- CSV (Full Scan Data)
-- PDF (Human-readable Summary)
-
-⚠️ This is an automated report.
-📌 Trades are NOT executed at this stage.
+    TradeFriend — Daily Scan Report
+    Date: {scan_date}
+    
+    Total Qualified Stocks: {len(scan_results)}
+    Strategies Triggered: {', '.join(strategies)}
+    
+    Symbols:
+    {', '.join(symbols)}
+    
+    Attachments:
+    - CSV (Full Scan Data)
+    - PDF (Human-readable Summary)
+    
+    ⚠️ This is an automated report.
+    📌 Trades are NOT executed at this stage.
         """.strip()
-
+    
         try:
             send_email_with_attachments(
                 sender_email=SENDER_EMAIL,
@@ -80,10 +83,11 @@ Attachments:
                 body=body,
                 file_paths=valid_files
             )
-
+    
             logger.info(
                 f"📧 Daily scan report email sent to {RECEIVER_EMAILS}"
             )
-
+    
         except Exception as e:
             logger.exception(f"❌ Failed to send scan report email: {e}")
+    

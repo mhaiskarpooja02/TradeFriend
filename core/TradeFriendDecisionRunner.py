@@ -1,9 +1,9 @@
 # core/TradeFriendDecisionRunner.py
 
-from datetime import datetime
+from datetime import datetime, date
 import time
 
-from const.PlanStatus import PlanStatus
+from const.PlanStatus import PlanStatus, TradeStatus
 from core.TradeFriendDecisionEngine import TradeFriendDecisionEngine
 from db.TradeFriendSwingPlanRepo import TradeFriendSwingPlanRepo
 from db.TradeFriendTradeRepo import TradeFriendTradeRepo
@@ -12,7 +12,7 @@ from reports.MorningConfirmReport import MorningConfirmReport
 from reports.MorningConfirmPdfBuilder import MorningConfirmPdfBuilder
 from config.TradeFriendConfig import REQUEST_DELAY_SEC
 
-from utils.logger import get_logger
+from utils.Decisionlogger import get_logger
 logger = get_logger(__name__)
 
 
@@ -43,75 +43,225 @@ class TradeFriendDecisionRunner:
         )
 
     # ==================================================
+    # EXPIRY CHECK
+    # ==================================================
+    def _is_expired(self, plan: dict) -> bool:
+        expiry = plan.get("expiry_date")
+        if not expiry:
+            return False
+        try:
+            return date.today() > date.fromisoformat(expiry)
+        except Exception:
+            return False
+
+    # ==================================================
     # MAIN ENTRY
     # ==================================================
     def run(self):
-        logger.info("🧠 DecisionRunner started")
+        logger.info("─" * 80)
+        logger.info(
+            f"🗓️ DecisionRunner started | date={date.today().isoformat()} | time={datetime.now().strftime('%H:%M:%S')}"
+        )
+        logger.info("🧠 DecisionRunner started for ")
 
-        # Expire old plans
+        # Expire old plans first (status-agnostic)
         self.swing_plan_repo.expire_old_plans()
 
-        # Fetch active plans
+        # Fetch active plans (PLANNED + HOLD)
         plans = self.swing_plan_repo.fetch_active_plans()
         if not plans:
-            logger.info("No PLANNED plans found")
+            logger.info("No PLANNED / HOLD plans found")
             return
 
         # Initialize unified decision engine
         engine = TradeFriendDecisionEngine(self.trade_repo)
 
         for plan_row in plans:
-            plan = dict(plan_row)  # convert Row → dict
+            plan = dict(plan_row)
             symbol = plan.get("symbol")
 
             try:
                 result = engine.evaluate(plan)
+                decision = result.get("decision")
 
-                if result["decision"] == PlanStatus.APPROVED:
+                # ------------------------------------------
+                # APPROVED
+                # ------------------------------------------
+                if decision == PlanStatus.APPROVED:
                     trade = result["trade"]
-                    trade["side"] = plan.get("direction", "BUY") 
-                    self.trade_repo.save_trade({**trade, "status": "READY"})
-                    self.swing_plan_repo.mark_decision(plan["id"], PlanStatus.APPROVED)
+                    trade["side"] = plan.get("direction", "BUY")
+
+                    self.trade_repo.save_trade({
+                        **trade,
+                        "status": TradeStatus.READY,
+                        "swing_plan_id": plan["id"], 
+                        "planned_entry": plan["entry"],
+                    })
+                    self.swing_plan_repo.mark_decision(
+                        plan["id"], PlanStatus.APPROVED
+                    )
+
                     self.report.add(
-                        symbol=symbol, ltp=None, entry=trade["entry"], sl=trade["sl"],
-                        target=trade["target"], decision=MorningConfirmReport.DECISION_APPROVED,
-                        reason="Approved", qty=trade["qty"],
+                        symbol=symbol,
+                        ltp=None,
+                        entry=trade["entry"],
+                        sl=trade["sl"],
+                        target=trade["target"],
+                        decision=MorningConfirmReport.DECISION_APPROVED,
+                        reason="Approved",
+                        qty=trade["qty"],
                         position_value=trade["qty"] * trade["entry"],
                         confidence=trade.get("confidence")
                     )
 
-                elif result["decision"] == PlanStatus.HOLD:
-                    self.swing_plan_repo.mark_decision(plan["id"], PlanStatus.HOLD)
-                    self.report.add(
-                        symbol=symbol, ltp=None, entry=plan["entry"], sl=plan["sl"],
-                        target=plan.get("target1") or plan.get("target"),
-                        decision=MorningConfirmReport.DECISION_SKIPPED,
-                        reason=f"HOLD: {result['reason']}"
+                    logger.info(
+                            "DECISION=APPROVED | "
+                            f"symbol={symbol} | "
+                            f"side={trade['side']} | "
+                            f"entry={trade['entry']} | "
+                            f"sl={trade['sl']} | "
+                            f"target={trade['target']} | "
+                            f"qty={trade['qty']} | "
+                            f"pos_value={trade['qty'] * trade['entry']} | "
+                            f"confidence={trade.get('confidence')} | "
+                            f"swing_plan_id={plan['id']}"
+                        )
+
+                # ------------------------------------------
+                # HOLD (RETRY UNTIL EXPIRY)
+                # ------------------------------------------
+                elif decision == PlanStatus.HOLD:
+                    if self._is_expired(plan):
+                        self.swing_plan_repo.mark_decision(
+                            plan["id"], PlanStatus.EXPIRED
+                        )
+
+                        self.report.add(
+                            symbol=symbol,
+                            ltp=None,
+                            entry=plan["entry"],
+                            sl=plan["sl"],
+                            target=plan.get("target1") or plan.get("target"),
+                            decision=MorningConfirmReport.DECISION_REJECTED,
+                            reason="Expired while on HOLD"
+                        )
+
+                        logger.info(
+                            "DECISION=EXPIRED | "
+                            f"symbol={symbol} | "
+                            f"entry={plan['entry']} | "
+                            f"sl={plan['sl']} | "
+                            f"target={plan.get('target1') or plan.get('target')} | "
+                            f"swing_plan_id={plan['id']}"
+                        ) 
+                    else:
+                        self.swing_plan_repo.mark_decision(
+                            plan["id"], PlanStatus.HOLD
+                        )
+
+                        self.report.add(
+                            symbol=symbol,
+                            ltp=None,
+                            entry=plan["entry"],
+                            sl=plan["sl"],
+                            target=plan.get("target1") or plan.get("target"),
+                            decision=MorningConfirmReport.DECISION_SKIPPED,
+                            reason=f"HOLD: {result.get('reason')}"
+                        )
+
+                        logger.info(
+                                "DECISION=HOLD | "
+                                f"symbol={symbol} | "
+                                f"entry={plan['entry']} | "
+                                f"sl={plan['sl']} | "
+                                f"target={plan.get('target1') or plan.get('target')} | "
+                                f"reason={result.get('reason')} | "
+                                f"swing_plan_id={plan['id']}"
+                            )
+                    
+
+                # ------------------------------------------
+                # REJECTED (TERMINAL)
+                # ------------------------------------------
+                else:
+                    self.swing_plan_repo.mark_decision(
+                        plan["id"], PlanStatus.REJECTED
                     )
 
-                else:  # REJECTED
-                    self.swing_plan_repo.mark_decision(plan["id"], PlanStatus.REJECTED)
                     self.report.add(
-                        symbol=symbol, ltp=None, entry=plan["entry"], sl=plan["sl"],
+                        symbol=symbol,
+                        ltp=None,
+                        entry=plan["entry"],
+                        sl=plan["sl"],
                         target=plan.get("target1") or plan.get("target"),
                         decision=MorningConfirmReport.DECISION_REJECTED,
-                        reason=result["reason"]
+                        reason=result.get("reason")
                     )
 
+                    logger.info(
+                            "DECISION=REJECTED | "
+                            f"symbol={symbol} | "
+                            f"entry={plan['entry']} | "
+                            f"sl={plan['sl']} | "
+                            f"target={plan.get('target1') or plan.get('target')} | "
+                            f"reason={result.get('reason')} | "
+                            f"swing_plan_id={plan['id']}"
+                        )
+
+            # ----------------------------------------------
+            # SYSTEM FAILURE → HOLD (NOT REJECT)
+            # ----------------------------------------------
             except Exception as e:
                 logger.exception(f"Decision failed for {symbol}")
-                self.swing_plan_repo.mark_decision(plan["id"], PlanStatus.REJECTED)
+
+                if self._is_expired(plan):
+                    status = PlanStatus.EXPIRED
+                    reason = "Expired due to system error"
+                else:
+                    status = PlanStatus.HOLD
+                    reason = f"SYSTEM_ERROR: {e}"
+
+                self.swing_plan_repo.mark_decision(plan["id"], status)
+
                 self.report.add(
-                    symbol=symbol, ltp=None, entry=plan.get("entry"), sl=plan.get("sl"),
+                    symbol=symbol,
+                    ltp=None,
+                    entry=plan.get("entry"),
+                    sl=plan.get("sl"),
                     target=plan.get("target1") or plan.get("target"),
-                    decision=MorningConfirmReport.DECISION_REJECTED,
-                    reason=str(e)
+                    decision=MorningConfirmReport.DECISION_SKIPPED,
+                    reason=reason
+                )
+
+                logger.error(
+                    "DECISION=SYSTEM_ERROR | "
+                    f"symbol={symbol} | "
+                    f"status={status} | "
+                    f"entry={plan.get('entry')} | "
+                    f"sl={plan.get('sl')} | "
+                    f"target={plan.get('target1') or plan.get('target')} | "
+                    f"reason={reason} | "
+                    f"swing_plan_id={plan['id']}",
+                    exc_info=True
                 )
 
             time.sleep(REQUEST_DELAY_SEC)
 
         # Generate PDF reports
         self._generate_reports()
+
+        logger.info(
+                "🧾 DecisionRunner completed | "
+                f"approved={len(self.report.approved())} | "
+                f"rejected={len(self.report.rejected())} | "
+                f"hold={len(self.report.skipped())}"
+            )
+        
+        logger.info(
+            f"🗓️ DecisionRunner comlpeted | date={date.today().isoformat()} | time={datetime.now().strftime('%H:%M:%S')}"
+        )
+        
+        logger.info("─" * 80)
 
     # ==================================================
     # REPORT OUTPUT

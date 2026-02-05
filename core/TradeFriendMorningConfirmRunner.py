@@ -93,7 +93,7 @@ class TradeFriendMorningConfirmRunner:
         """
         VALIDATION ONLY
         """
-        if trade["confidence"] < 6:
+        if trade["confidence"] < 5:
             self.trade_repo.invalidate_trade(
                 trade["id"],
                 "Morning confirm failed: low confidence"

@@ -1,14 +1,10 @@
+import os
+import csv
 import logging
-from db.tradefindinstrument_db import TradeFindDB
+from datetime import datetime
+
 from utils.file_handler import load_symbols_from_csv
-from utils.symbol_resolver import SymbolResolver
-from config.settings import RangeBoundInput_DIR
-
-
-# ------------------------------
-# CONFIG
-# ------------------------------
-INPUT_FOLDER = RangeBoundInput_DIR
+from config.settings import RangeBoundInput_DIR, RangeBoundOutput_DIR
 
 
 # ------------------------------
@@ -18,96 +14,58 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s — %(levelname)s — %(message)s"
 )
-logger = logging.getLogger("initial_insert")
+logger = logging.getLogger("symbol_csv_only")
 
 
 # ------------------------------
 # MAIN FUNCTION
 # ------------------------------
-def initial_insert_symbols(input_folder):
-    logger.info(f"🔍 Scanning folder for CSV symbols: {input_folder}")
+def generate_symbol_csv(input_folder, output_folder):
+    logger.info(f"🔍 Reading symbols from: {input_folder}")
 
-    # Step 1: Load symbols
     try:
-        names = load_symbols_from_csv(input_folder)
-        if not names:
+        symbols = load_symbols_from_csv(input_folder)
+        if not symbols:
             logger.warning("⚠ No symbols found.")
             return
-        logger.info(f"📄 Found {len(names)} symbols.")
     except Exception as e:
-        logger.error(f"❌ Error loading symbols: {e}")
+        logger.error(f"❌ Failed to read symbols: {e}")
         return
 
-    resolver = SymbolResolver()
-    inserted, rejected = 0, []
+    # Normalize + deduplicate
+    clean_symbols = sorted({
+        s.strip().upper()
+        for s in symbols
+        if s and s.strip()
+    })
 
-    # Track symbols seen in this run (for soft delete later)
-    seen_symbols = set()
+    logger.info(f"📄 Total unique symbols: {len(clean_symbols)}")
 
-    # Step 2: DB operations (context manager)
-    with TradeFindDB() as db:
-        for sym in names:
-            sym = sym.strip().upper()
-            if not sym:
-                continue
+    # Ensure output folder exists
+    os.makedirs(output_folder, exist_ok=True)
 
-            mapping = resolver.resolve_symbol_tradefinder(sym)
-            if not mapping:
-                rejected.append(f"{sym} → No mapping found")
-                continue
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(
+        output_folder,
+        f"rangebound_symbols_{ts}.csv"
+    )
 
-            trading_symbol = mapping.get("trading_symbol")
-            token = mapping.get("token")
+    # Write CSV
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["symbol"])
+        for sym in clean_symbols:
+            writer.writerow([sym])
 
-            if not trading_symbol or not token:
-                rejected.append(f"{sym} → Incomplete mapping")
-                continue
+    logger.info("🎉 SYMBOL CSV CREATED")
+    logger.info(f"📁 File saved at: {output_file}")
 
-            ok = db.upsert_symbol(
-                symbol=sym,
-                trading_symbol=trading_symbol,
-                token=str(token)
-            )
 
-            if ok:
-                logger.info(f"✅ Inserted/Updated: {sym} → {trading_symbol} ({token})")
-                inserted += 1
-                seen_symbols.add(sym)
-            else:
-                logger.warning(f"⏭ Failed: {sym}")
-
-        # ----------------------------------
-        # OPTIONAL: SOFT DELETE MISSING SYMBOLS
-        # ----------------------------------
-        # Uncomment ONLY if you want this behavior
-        #
-        # active_rows = db.get_active()
-        # for row in active_rows:
-        #     if row["symbol"] not in seen_symbols:
-        #         db.deactivate_symbol(row["symbol"])
-        #         logger.info(f"🛑 Deactivated: {row['symbol']}")
-
-    logger.info("🎉 INITIAL IMPORT COMPLETE")
-    logger.info(f"➡ Inserted / Updated: {inserted}")
-    logger.info(f"➡ Rejected: {len(rejected)}")
-
-def get_symbols_for_validation(self):
-    """
-    Placeholder method.
-
-    Responsibility:
-    - Return a normalized list of symbols to be validated.
-    - Future versions may:
-        - Pull from DB
-        - Merge multiple sources
-        - Apply filters (watchlist, sector, etc.)
-
-    Expected return:
-        List[str]
-    """
-    return []
 # ------------------------------
 # ENTRY POINT
 # ------------------------------
 if __name__ == "__main__":
-    initial_insert_symbols(INPUT_FOLDER)
+    generate_symbol_csv(
+        input_folder=RangeBoundInput_DIR,
+        output_folder=RangeBoundOutput_DIR
+    )

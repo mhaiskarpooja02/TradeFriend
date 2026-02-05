@@ -21,6 +21,7 @@ from core.TradeFriendInitialScanReportService import (
     TradeFriendDailyScanReportService
 )
 
+from db.TradeFriendStocMasterRepo import TradeFriendStocMasterRepo
 from strategy.TradeFriendScanner import TradeFriendScanner
 from strategy.TradeFriendSwingEntryPlanner import TradeFriendSwingEntryPlanner
 from core.TradeFriendConfidenceScorer import TradeFriendConfidenceScorer
@@ -63,7 +64,7 @@ class WatchlistEngine:
         self.trade_repo = TradeFriendTradeRepo()
 
         self.confidence_scorer = TradeFriendConfidenceScorer()
-
+        self.stockmaster_repo = TradeFriendStocMasterRepo()
         # Hard API throttle (broker-safe)
         self.api_semaphore = threading.Semaphore(2)
 
@@ -142,17 +143,17 @@ class WatchlistEngine:
     
             logger.debug(f"📈 [{symbol}] Data OK | rows={len(df)}")
     
-            # ==================================================
-            # READY LTP VALIDATION
-            # ==================================================
-            logger.debug(f"🔎 [{symbol}] Validating READY LTP")
+            # # # ==================================================
+            # # # READY LTP VALIDATION
+            # # # ==================================================
+            # # logger.debug(f"🔎 [{symbol}] Validating READY LTP")
     
-            ltp = self._validate_symbol_ltp_ready(row, rejected)
-            if ltp is None:
-                logger.warning(f"⛔ [{symbol}] REJECT → LTP validation failed")
-                return
+            # # ltp = self._validate_symbol_ltp_ready(row, rejected)
+            # # if ltp is None:
+            # #     logger.warning(f"⛔ [{symbol}] REJECT → LTP validation failed")
+            # #     return
     
-            logger.debug(f"💰 [{symbol}] LTP OK → {ltp}")
+            # # logger.debug(f"💰 [{symbol}] LTP OK → {ltp}")
     
             # ==================================================
             # ENGINE INDICATORS
@@ -331,9 +332,9 @@ class WatchlistEngine:
     # ==================================================
 
     def run(self):
-        if not self._can_run_today():
-            logger.info("⏭ Daily scan skipped (already executed)")
-            return
+        # if not self._can_run_today():
+        #     logger.info("⏭ Daily scan skipped (already executed)")
+        #     return
 
         logger.info("📊 Daily Watchlist Scan started")
 
@@ -345,7 +346,7 @@ class WatchlistEngine:
         self.watchlist_repo.delete_untriggered_older_than(days=7)
         self.swing_plan_repo.delete_orphan_plans()
 
-        symbols = self.instrument_db.get_active()
+        symbols = self.stockmaster_repo.get_active_symbols()
         if not symbols:
             logger.warning("No active symbols found")
             return
@@ -384,7 +385,7 @@ class WatchlistEngine:
             pdf_path = f"reports/daily_scan/scan_{scan_date}.pdf"
 
             TradeFriendInitialScanCsvExporter().export(valid, csv_path)
-            TradeFriendInitialScanPdfGenerator().generate(
+            TradeFriendInitialScanPdfGenerator().build(
                 scan_date=scan_date,
                 rows=valid,
                 score_cutoff=MIN_SCAN_CONFIDENCE,

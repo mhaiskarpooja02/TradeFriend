@@ -11,7 +11,7 @@ from config.settings import LOG_DIR
 # ---------------------------------------------------------------------
 os.makedirs(LOG_DIR, exist_ok=True)
 
-LOG_FILE = os.path.join(LOG_DIR, "app.log")
+LOG_FILE = os.path.join(LOG_DIR, "Decisionapp.log")
 ORDER_LOG_FILE = os.path.join(LOG_DIR, "orders.log")
 
 # ---------------------------------------------------------------------

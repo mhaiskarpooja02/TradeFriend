@@ -200,3 +200,78 @@ class TradeFriendSwingPlanRepo:
             self.conn.close()
         except Exception:
             pass
+
+    # --------------------------------------------------
+    # Mark As trigger
+    # --------------------------------------------------       
+    def mark_triggered_by_Planid(self, plan_id: int):
+        self.conn.execute("""
+            UPDATE swing_trade_plans
+                SET status = 'TRIGGERED',
+                    triggered_on = datetime('now')
+                WHERE id = ?
+        """, (plan_id,))
+        self.conn.commit()
+
+
+    
+    # --------------------------------------------------
+    # UPDATE EXISTING PLAN
+    # --------------------------------------------------
+    def update_plan(self, plan_id: int, new_plan: Dict):
+        if not plan_id or not new_plan:
+            return
+        
+
+        new_plan = dict(new_plan)
+        target1 = new_plan.get("target1") or new_plan.get("target")
+
+        self.conn.execute("""
+            UPDATE swing_trade_plans
+            SET
+                entry = ?,
+                sl = ?,
+                target1 = ?,
+                rr = ?,
+                expiry_date = ?,
+                strategy = ?,
+
+                direction = COALESCE(?, direction),
+                order_type = COALESCE(?, order_type),
+                trade_type = COALESCE(?, trade_type),
+                carry_forward = COALESCE(?, carry_forward),
+                product_type = COALESCE(?, product_type)
+            WHERE id = ?
+        """, (
+            float(new_plan["entry"]),
+            float(new_plan["sl"]),
+            float(target1),
+            new_plan.get("rr"),
+            new_plan.get("expiry_date"),
+            new_plan.get("strategy"),
+
+            new_plan.get("direction"),
+            new_plan.get("order_type"),
+            new_plan.get("trade_type"),
+            new_plan.get("carry_forward"),
+            new_plan.get("product_type"),
+
+            plan_id
+        ))
+
+        self.conn.commit()
+
+    # --------------------------------------------------
+    # Temporary method 
+    # --------------------------------------------------
+    def get_latest_approved_plan_id_by_symbol(self, symbol: str) -> int | None:
+        row = self.conn.execute("""
+            SELECT id
+            FROM swing_trade_plans
+            WHERE symbol = ?
+              AND status IN ('APPROVED', 'READY', 'TRIGGERED','HOLD')
+            ORDER BY created_on DESC
+            LIMIT 1
+        """, (symbol,)).fetchone()
+    
+        return row["id"] if row else None

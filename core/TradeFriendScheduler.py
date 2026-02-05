@@ -9,9 +9,8 @@ from core.TradeFriendDecisionRunner import TradeFriendDecisionRunner
 from core.TradeFriendMorningConfirmRunner import TradeFriendMorningConfirmRunner
 from core.TradeFriendSwingMonitor import TradeFriendSwingTradeMonitor
 from db.TradeFriendTradeRepo import TradeFriendTradeRepo
-
-logger = logging.getLogger(__name__)
-
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 class TradeFriendScheduler:
     """
@@ -38,6 +37,7 @@ class TradeFriendScheduler:
         self._last_scan_date = None
         self._last_trigger_minute = None
         self._decision_done_date = None
+        self._eod_report_date = None
 
     # ==================================================
     # LIFECYCLE
@@ -96,7 +96,11 @@ class TradeFriendScheduler:
         return self._in_range(dtime(9, 17), dtime(9, 32))
 
     def is_trigger_engine_time(self):
-        return self._in_range(dtime(9, 16), dtime(23, 25))
+        return self._in_range(dtime(9, 16), dtime(15, 25))
+    
+    def is_eod_report_time(self):
+    # After market close + buffer
+        return self._in_range(dtime(15,31 ), dtime(18, 55))
 
     # ==================================================
     # MAIN LOOP
@@ -156,6 +160,19 @@ class TradeFriendScheduler:
                         monitor.run()
 
                         self._last_trigger_minute = minute_key
+
+                
+
+                if self.is_eod_report_time():
+                    if self._eod_report_date != today:
+                        logger.info("📊 Running End-of-Day Report Pipeline")
+                        try:
+                            self.manager.tf_generate_eod_reports(report_date=today)
+                            self._eod_report_date = today
+                            logger.info("✅ EOD Report completed")
+                        except Exception:
+                            logger.exception("❌ EOD Report failed")
+
 
             except Exception:
                 logger.exception("Scheduler execution failed")
