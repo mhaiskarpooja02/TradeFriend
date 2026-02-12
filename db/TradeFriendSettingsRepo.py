@@ -4,6 +4,10 @@ import sqlite3
 from datetime import datetime
 import os
 
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 DB_FOLDER = "dbdata"
 DB_FILE = os.path.join(DB_FOLDER, "tradefriend_settings.db")
 os.makedirs(DB_FOLDER, exist_ok=True)
@@ -94,10 +98,32 @@ class TradeFriendSettingsRepo:
         return row["trade_mode"] if row and row["trade_mode"] else "PAPER"
     
     def adjust_available_swing_capital(self, delta: float):
-        row = self.fetch()
-        current = row["available_swing_capital"] or 0
-        new_value = round(current + delta, 2)
-        self.update({"available_swing_capital": new_value})
+        """
+        Safely adjust available swing capital.
+
+        Args:
+            delta: Positive to release capital (exit), negative to allocate (new entry)
+        """
+        # Thread-safe lock
+        if not hasattr(self, "_lock"):
+            import threading
+            self._lock = threading.Lock()
+
+        with self._lock:
+            row = self.fetch()
+            current = row["available_swing_capital"] or 0
+            # Prevent negative swing capital
+            new_value = max(round(current + delta, 2), 0)
+
+            # Persist update
+            self.update({"available_swing_capital": new_value})
+
+            # Logging
+            action = "Released" if delta > 0 else "Allocated"
+            logger.info(
+                f"💰 {action} capital: {abs(delta)} | "
+                f"Previous: {current} | New available: {new_value}"
+            )
 
     def set_trade_mode(self, mode: str):
         self.update({"trade_mode": mode})

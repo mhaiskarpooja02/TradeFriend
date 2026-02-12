@@ -8,6 +8,7 @@ from datetime import datetime
 # --------------------------------------------------
 DB_FOLDER = "dbdata"
 DB_FILE = os.path.join(DB_FOLDER, "tradefriend_algo.db")
+LicenceDB_FILE = os.path.join(DB_FOLDER, "tradefriend_swingalgo.db")
 
 # --------------------------------------------------
 # UPDATER CLASS
@@ -18,7 +19,7 @@ class SwingTradePlanStatusUpdater:
             raise FileNotFoundError(f"Database not found: {db_file}")
         self.db_file = db_file
 
-    def update_status_from_csv(self, csv_path, new_status="PLANNED"):
+    def update_status_from_csv(self, csv_path, new_status="HOLD"):
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"CSV not found: {csv_path}")
 
@@ -74,7 +75,7 @@ if __name__ == "__main__":
     updater = SwingTradePlanStatusUpdater()
 
     # 🔽 CHANGE CSV PATH IF NEEDED
-    csv_file_path = "reports/swing_plans/swing_trade_actual_2026-01-23_planned.csv"
+    csv_file_path = "reports/swing_plans/swing_TradeFriendtrade_actual_2026-02-06.csv"
 
     updater.update_status_from_csv(
         csv_path=csv_file_path,

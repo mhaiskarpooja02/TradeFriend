@@ -49,6 +49,7 @@ class TradeFriendRealizedPnLRepo:
 
                 symbol TEXT NOT NULL,
                 side TEXT NOT NULL,                -- BUY / SELL (original side)
+                mode TEXT NOT NULL,        
                 exit_reason TEXT NOT NULL,
 
                 qty INTEGER NOT NULL,
@@ -100,6 +101,7 @@ class TradeFriendRealizedPnLRepo:
         trade_id: int,
         symbol: str,
         side: str,
+         mode: str,  
         qty: int,
         entry_price: float,
         exit_price: float,
@@ -129,6 +131,7 @@ class TradeFriendRealizedPnLRepo:
                 symbol,
                 side,
                 exit_reason,
+                mode,       
                 qty,
                 entry_price,
                 exit_price,
@@ -137,12 +140,13 @@ class TradeFriendRealizedPnLRepo:
                 exit_date,
                 exit_week,
                 exit_month
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?,   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             trade_id,
             broker_trade_id,
             symbol,
             side,
+            mode,
             exit_reason,
             qty,
             entry_price,

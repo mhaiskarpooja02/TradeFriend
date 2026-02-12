@@ -35,7 +35,7 @@ settings_cur = settings_conn.cursor()
 # FETCH USED CAPITAL
 # -----------------------------
 trade_cur.execute("""
-    SELECT COALESCE(SUM(position_value), 0) AS used_capital
+    SELECT COALESCE(SUM(entry * remaining_qty), 0) AS used_capital
     FROM tradefriend_trades
     WHERE status IN ('OPEN', 'PARTIAL')
 """)

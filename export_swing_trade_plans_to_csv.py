@@ -72,7 +72,7 @@ def export_swing_trade_plans():
         SELECT *
         FROM swing_trade_plans
        
-        WHERE status NOT IN ('EXPIRED')
+        
         ORDER BY created_on DESC
     """)
 
@@ -219,9 +219,9 @@ def mark_all_non_expired_swing_plans_hold() -> int:
 # MANUAL RUN
 # --------------------------------------------------
 if __name__ == "__main__":
-#   export_swing_trade_plans()
+   export_swing_trade_plans()
     # cleanup_today_data()
-    #  export_tradefriend_trades_plans()
+     # export_tradefriend_trades_plans()
     # export_active_trade_symbols_csv()
-    export_swing_trade_plans()
+    #export_swing_trade_plans()
     # mark_all_non_expired_swing_plans_hold()

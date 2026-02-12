@@ -345,7 +345,7 @@ def validate_watchlist_symbols_and_cleanup(provider):
 
     print("✅ Validation + cleanup completed")
 if __name__ == "__main__":
-     cleanup_today_data()
+    #  cleanup_today_data()
     # remove_duplicate_rows()
 
     # ids = get_todays_trade_ids()
@@ -354,13 +354,17 @@ if __name__ == "__main__":
 
     #  mark_todays_plans_as_planned()
 
-    # symbols_to_delete = [
-    #     "NACLIND-EQ",
-    #     "VENUSREM-EQ"
+    symbols_to_delete = [
+     
+        "SEAMECLTD-EQ"
+        ,"GSPL-EQ"
+        ,"GLAND-EQ"
+        ,"BAJAJ-AUTO-EQ"
+        ,"ASTRAL-EQ"
         
-    # ]
+    ]
 
-    # delete_by_symbols(symbols_to_delete)
+    delete_by_symbols(symbols_to_delete)
     # from core.TradeFriendDataProvider import TradeFriendDataProvider
 
     # provider = TradeFriendDataProvider()

@@ -238,14 +238,14 @@ class TradeFriendDashboard(ttk.Frame):
 
         cols = (
            "symbol", "entry", "ltp", "sl", "target",
-            "qty", "pnl", "r", "progress", "status"
+            "init_qty","rem_qty", "pnl", "r", "progress", "status"
         )
         self.trades_table = ttk.Treeview(
             self.trades_tab, columns=cols, show="headings"
         )
         for c in cols:
             self.trades_table.heading(c, text=c.upper())
-            self.trades_table.column(c, width=100, anchor="center")
+            self.trades_table.column(c, width=95, anchor="center")
 
         self.trades_table.tag_configure("profit", foreground="green")
         self.trades_table.tag_configure("loss", foreground="red")
@@ -534,53 +534,76 @@ class TradeFriendDashboard(ttk.Frame):
 
     # =====================================================
     # HELPERS
-    # =====================================================
+    # ====================================================
 
-    from datetime import datetime, time
+    # ============================================================
+    # LTP ACCESS (Dashboard-owned cache + provider fetch)
+    # - Cache-first with TTL
+    # - MarketTimeService is the authority
+    # - Provider is used only when allowed
+    # - Safe fallback to last known price
+    # ============================================================
 
-
-    def _get_ltp_cached(self, symbol, ttl_seconds: int = 20):
+    def _get_ltp_from_cache(self, symbol: str, ttl_seconds: int):
         """
-        Centralized LTP access with:
-        - MarketTimeService authority
-        - TTL-based cache during fetch window
-        - Safe fallback when market / LTP fetch is closed
+        Return cached LTP if present and within TTL, else None.
         """
-
-        now = MTS.now()
         cached = self.ltp_cache.get(symbol)
+        if not cached:
+            return None
 
-        # --------------------------------------------------
-        # LTP FETCH NOT ALLOWED → ALWAYS USE CACHE
-        # --------------------------------------------------
-        if not MTS.can_fetch_ltp():
-            return cached[0] if cached else None
+        price, ts = cached
+        if not ts:
+            return None
 
-        # --------------------------------------------------
-        # LTP FETCH ALLOWED → USE TTL CACHE IF FRESH
-        # --------------------------------------------------
-        if cached:
-            price, ts = cached
+        age = (MTS.now() - ts).total_seconds()
+        if age <= ttl_seconds:
+            return price
 
-            # Defensive: old entries without timestamp
-            if ts and (now - ts).total_seconds() <= ttl_seconds:
-                return price
+        return None
 
-        # --------------------------------------------------
-        # FETCH FRESH LTP
-        # --------------------------------------------------
+
+    def _fetch_ltp_from_provider(self, symbol: str):
+        """
+        One-shot LTP fetch from provider.
+        No cache. No TTL. Cooldown-safe.
+        """
         try:
-            ltp = self.provider.get_ltp_byLtp(symbol)
-            if ltp is not None:
-                self.ltp_cache[symbol] = (ltp, now)
-                return ltp
+            return self.provider.get_ltp_byLtp(symbol)
         except Exception:
-            pass
+            return None
+
+
+    def _get_ltp_cached(self, symbol: str, ttl_seconds: int = 20):
+        """
+        Centralized LTP access for UI:
+        - Cache-first (TTL)
+        - Market-time governed
+        - Provider fetch when allowed
+        - Fallback to last cached value
+        """
 
         # --------------------------------------------------
-        # FINAL FALLBACK
+        # 1️⃣ Cache first
         # --------------------------------------------------
-        return cached[0] if cached else None
+        cached_price = self._get_ltp_from_cache(symbol, ttl_seconds)
+        if cached_price is not None:
+            return cached_price
+
+        # --------------------------------------------------
+        # 3️⃣ Fetch fresh LTP
+        # --------------------------------------------------
+        ltp = self._fetch_ltp_from_provider(symbol)
+        if ltp is not None:
+            self.ltp_cache[symbol] = (ltp, MTS.now())
+            return ltp
+
+        # --------------------------------------------------
+        # 4️⃣ Final fallback
+        # --------------------------------------------------
+        return self.ltp_cache.get(symbol, (None, None))[0]
+
+    
 
     def toggle_trade_mode(self):
         self.trade_mode = "LIVE" if self.trade_mode == "PAPER" else "PAPER"

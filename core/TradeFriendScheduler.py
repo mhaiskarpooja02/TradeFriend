@@ -7,7 +7,7 @@ from datetime import datetime, time as dtime
 
 from core.TradeFriendDecisionRunner import TradeFriendDecisionRunner
 from core.TradeFriendMorningConfirmRunner import TradeFriendMorningConfirmRunner
-from core.TradeFriendSwingMonitor import TradeFriendSwingTradeMonitor
+from core.TradeFriendSwingTradeMonitor import TradeFriendSwingTradeMonitor
 from db.TradeFriendTradeRepo import TradeFriendTradeRepo
 from utils.logger import get_logger
 logger = get_logger(__name__)
@@ -90,10 +90,10 @@ class TradeFriendScheduler:
         return self._in_range(dtime(7, 0), dtime(8, 45))
 
     def is_decision_runner_time(self):
-        return self._in_range(dtime(9, 15), dtime(9, 20))
+        return self._in_range(dtime(9, 15), dtime(10, 7))
 
     def is_morning_confirm_time(self):
-        return self._in_range(dtime(9, 17), dtime(9, 32))
+        return self._in_range(dtime(9, 17), dtime(10, 15))
 
     def is_trigger_engine_time(self):
         return self._in_range(dtime(9, 16), dtime(15, 25))

@@ -32,7 +32,7 @@ class TradeFriendMarketTimeService:
     # EXCHANGE CONFIG (NSE)
     # ==================================================
     LTPMARKET_OPEN = dtime(7, 15)
-    LTPMARKET_CLOSE = dtime(11, 59)
+    LTPMARKET_CLOSE = dtime(15, 59)
 
     # ==================================================
     # STRATEGY WINDOWS
@@ -49,8 +49,8 @@ class TradeFriendMarketTimeService:
     TRIGGER_START = dtime(9, 16)
     TRIGGER_END = dtime(15, 25)
 
-    EOD_REPORT_START = dtime(17, 40)
-    EOD_REPORT_END = dtime(17, 45)
+    EOD_REPORT_START = dtime(22, 10)
+    EOD_REPORT_END = dtime(22, 20)
 
     # ==================================================
     # SPECIAL DAYS (OVERRIDES)
@@ -126,7 +126,7 @@ class TradeFriendMarketTimeService:
 
         t = cls.time()
         return cls.MARKET_OPEN <= t <= cls.MARKET_CLOSE
-    
+    @classmethod
     def is_LTPmarket_open(cls) -> bool:
         if not cls.is_trading_day():
             return False

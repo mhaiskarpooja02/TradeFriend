@@ -1,16 +1,18 @@
 # core/TradeFriendSwingTradeMonitor.py
 
-from utils.logger import get_logger
+from const.PlanStatus import ExitReason, HoldMode
+from utils.logger import get_logger,get_monitor_logger
 from core.TradeFriendDataProvider import TradeFriendDataProvider
 from db.TradeFriendTradeRepo import TradeFriendTradeRepo
 from Servieces.TradeFriendExitOrderService import TradeFriendExitOrderService
+from db.TradeFriendRealizedPnLRepo import TradeFriendRealizedPnLRepo
 from db.TradeFriendOrderConfigRepo import TradeFriendOrderConfigRepo
 from config.TradeFriendConfig import (
     ALLOW_TRAILING_SL,
     ENABLE_PARTIAL_BOOKING,
 )
 
-logger = get_logger(__name__)
+logger = get_monitor_logger()
 
 
 class TradeFriendSwingTradeMonitor:
@@ -26,6 +28,7 @@ class TradeFriendSwingTradeMonitor:
         self.trade_repo = TradeFriendTradeRepo()
         self.exit_oms = TradeFriendExitOrderService()
         self.order_config = TradeFriendOrderConfigRepo()
+        self.realized_repo = TradeFriendRealizedPnLRepo()
 
     # ==================================================
     # PUBLIC ENTRY
@@ -80,7 +83,8 @@ class TradeFriendSwingTradeMonitor:
         # 1️⃣ HARD SL — FINAL EXIT (TOP PRIORITY)
         # ==================================================
         if ltp <= sl:
-            self._final_exit(trade, "SL_HIT", remaining_qty, ltp)
+            exit_reason = self._classify_sl_hit(trade)
+            self._final_exit(trade, exit_reason, remaining_qty, ltp)
             return  # 🔒 lock cycle
 
         # ==================================================
@@ -96,9 +100,9 @@ class TradeFriendSwingTradeMonitor:
         # ==================================================
         # 3️⃣ TARGET → CONVERT TO RUNNER (NO EXIT)
         # ==================================================
-        if ltp >= target and hold_mode == 1:
+        if ltp >= target and hold_mode == HoldMode.PARTIAL:
             self.trade_repo.update_sl(trade_id, target)
-            self.trade_repo.update_hold_mode(trade_id, 2)
+            self.trade_repo.update_hold_mode(trade_id,HoldMode.RUNNER.value)
             logger.info(f"🏁 TARGET → RUNNER | {symbol}")
             return
 
@@ -123,63 +127,97 @@ class TradeFriendSwingTradeMonitor:
         initial_qty: int,
         remaining_qty: int
     ) -> bool:
-        """
-        📌 Decide highest eligible tier based on exited_qty and LTP
-        """
 
         symbol = trade["symbol"]
+        trade_id = trade["id"]
 
         exited_qty = initial_qty - remaining_qty
-
-        # -------------------------------
-        # Build ¼ quantity plan safely
-        # -------------------------------
         base_qty = initial_qty // 4
+
+        # -----------------------------
+        # Safety Check
+        # -----------------------------
         if base_qty <= 0:
+            logger.debug(f"Partial skipped | {symbol} | BaseQty=0")
             return False
 
         remainder = initial_qty - (base_qty * 4)
 
-        # Highest tier first (gap-safe)
+        logger.debug(
+            f"Tier Check | {symbol} | "
+            f"LTP={ltp} | Exited={exited_qty} | Remaining={remaining_qty}"
+        )
+
+        # -----------------------------
+        # Tier Definitions
+        # -----------------------------
         tiers = [
-            ("PARTIAL_EXIT_75", 0.75, base_qty),
-            ("PARTIAL_EXIT_50", 0.50, base_qty),
-            ("PARTIAL_EXIT_25", 0.25, base_qty),
+            (ExitReason.PARTIAL_EXIT_25, 0.25, base_qty),
+            (ExitReason.PARTIAL_EXIT_50, 0.50, base_qty * 2),
+            (ExitReason.PARTIAL_EXIT_75, 0.75, base_qty * 3),
         ]
 
-        for tier_name, tier_ratio, tier_qty in tiers:
-            tier_price = entry + ((target - entry) * tier_ratio)
-            required_exited = int(initial_qty * tier_ratio)
+        eligible_tier = None
 
-            # 🔐 Already crossed earlier
-            if exited_qty >= required_exited:
+        for tier_name, tier_ratio, required_exited_qty in tiers:
+
+            # Skip completed tiers
+            if exited_qty >= required_exited_qty:
                 continue
 
-            # 📈 Price condition met
+            tier_price = entry + ((target - entry) * tier_ratio)
+
+            logger.debug(
+                f"{symbol} | {tier_name} | "
+                f"TierPrice={round(tier_price,2)} | LTP={ltp}"
+            )
+
             if ltp >= tier_price:
-                final_exit_qty = min(tier_qty, remaining_qty)
+                eligible_tier = (tier_name, base_qty)
+            else:
+                break  # Higher tiers impossible if this one not reached
 
-                # 🧮 Add remainder only on LAST exit
-                if final_exit_qty == remaining_qty:
-                    final_exit_qty += remainder
+        if not eligible_tier:
+            return False
 
-                self._execute_exit(
-                    trade,
-                    tier_name,
-                    final_exit_qty,
-                    ltp
-                )
+        # -----------------------------
+        # Execute Partial
+        # -----------------------------
+        tier_name, exit_qty = eligible_tier
+        exit_qty = min(exit_qty, remaining_qty)
 
-                logger.info(
-                    f"📉 PARTIAL EXIT | {symbol} | {tier_name} | "
-                    f"QTY={final_exit_qty} @ {ltp}"
-                )
-                return True  # 🔒 EXIT LOCK
+        # Add remainder only on final exit
+        if remaining_qty == exit_qty:
+            exit_qty += remainder
 
-            # ❌ Price not eligible → stop lower tiers
-            break
+        logger.info(
+            f"""
+    📉 PARTIAL EXIT EXECUTED
+    Symbol        : {symbol}
+    Trade ID      : {trade_id}
+    Tier          : {tier_name}
+    Exit Qty      : {exit_qty}
+    Exit Price    : {ltp}
+    Remaining Qty : {remaining_qty - exit_qty}
+    """
+        )
 
-        return False
+        # Execute exit
+        self._execute_exit(trade, tier_name, exit_qty, ltp)
+        updated_trade = self.trade_repo.fetch_by_id(trade_id)
+        current_hold_mode = HoldMode(int(updated_trade.get("hold_mode", 0)))
+        
+
+        if current_hold_mode == HoldMode.OPEN:
+            self.trade_repo.update_hold_mode(
+                trade_id,
+                HoldMode.PARTIAL.value
+            )
+
+        # Restructure SL
+        self._restructure_sl_after_partial(trade_id)
+
+        return True
 
     # ==================================================
     # EXECUTE EXIT — PAPER / LIVE SAFE
@@ -191,6 +229,8 @@ class TradeFriendSwingTradeMonitor:
 
         trade_id = trade["id"]
         symbol = trade["symbol"]
+        side = trade["side"]
+        entry_price = float(trade["entry"])
 
         if qty <= 0:
             return
@@ -205,6 +245,17 @@ class TradeFriendSwingTradeMonitor:
                 exit_qty=qty,
                 exit_price=price
             )
+
+            self.realized_repo.insert_realized_pnl(
+    trade_id=trade_id,
+    symbol=symbol,
+    side=side,
+    mode="PAPER",
+    qty=qty,
+    entry_price=entry_price,
+    exit_price=price,
+    exit_reason=reason
+)
             return
 
         # =====================
@@ -229,7 +280,7 @@ class TradeFriendSwingTradeMonitor:
     # ==================================================
     # FINAL EXIT — SL / FULL CLOSE
     # ==================================================
-    def _final_exit(self, trade: dict, reason: str, qty: int, price: float):
+    def _final_exit(self, trade: dict, reason: ExitReason, qty: int, price: float):
         """
         📌 Final exit — close and archive trade
         """
@@ -238,7 +289,11 @@ class TradeFriendSwingTradeMonitor:
         symbol = trade["symbol"]
 
         if not self.order_config.is_live():
-            self.trade_repo.close_and_archive(trade_id, price, reason)
+            self.trade_repo.close_and_archive(
+                trade_id=trade_id,
+                exit_price=price,
+                exit_reason=reason.value
+            )
             return
 
         self.exit_oms.place_exit_order(
@@ -248,3 +303,83 @@ class TradeFriendSwingTradeMonitor:
             exit_reason=reason,
             exit_price=price
         )
+    
+    # ==================================================
+    # Restructure sl after partial
+    # ==================================================
+    def _restructure_sl_after_partial(self, trade_id: int):
+
+        trade = self.trade_repo.fetch_by_id(trade_id)
+        if not trade:
+            return
+
+        entry = float(trade["entry"])
+        target = float(trade["target"])
+        initial_qty = int(trade["initial_qty"])
+        remaining_qty = int(trade["remaining_qty"])
+        current_sl = float(trade["sl"])
+
+        booked_qty = initial_qty - remaining_qty
+        progress = booked_qty / initial_qty
+
+        level_25 = entry
+        level_50 = entry + (target - entry) * 0.25
+        level_75 = entry + (target - entry) * 0.50
+
+        new_sl = current_sl
+
+        if progress >= 0.75:
+            new_sl = max(current_sl, level_75)
+        elif progress >= 0.50:
+            new_sl = max(current_sl, level_50)
+        elif progress >= 0.25:
+            new_sl = max(current_sl, level_25)
+
+        if new_sl > current_sl:
+            self.trade_repo.update_sl(trade_id, round(new_sl, 2))
+
+            logger.info(
+                f"""
+    🔒 SL RESTRUCTURED AFTER PARTIAL
+    Trade ID     : {trade_id}
+    Progress     : {round(progress*100,2)}%
+    Old SL       : {current_sl}
+    New SL       : {round(new_sl,2)}
+    """
+            )
+
+        # ==================================================
+    # SL CLASSIFICATION — EXIT REASON DECIDER
+    # ==================================================
+    def _classify_sl_hit(self, trade: dict) -> ExitReason:
+        """
+        📌 Determine which SL type was hit.
+
+        Long-only logic:
+        - INITIAL_SL_HIT      → SL below entry (loss zone)
+        - BREAKEVEN_SL_HIT    → SL at entry
+        - PROFIT_LOCK_SL_HIT  → SL above entry
+        - TRAILING_SL_HIT     → Runner trailing stop (hold_mode=2)
+        """
+
+        entry = float(trade["entry"])
+        sl = float(trade["sl"])
+        hold_mode = int(trade.get("hold_mode", 0))
+
+        # Runner trailing SL
+        if hold_mode == 2:
+            return ExitReason.TRAILING_SL_HIT
+
+        # Initial hard SL (loss)
+        if sl < entry:
+            return ExitReason.INITIAL_SL_HIT
+
+        # Breakeven SL
+        if abs(sl - entry) < 0.05:
+            return ExitReason.BREAKEVEN_SL_HIT
+
+        # Profit lock SL
+        if sl > entry:
+            return ExitReason.PROFIT_LOCK_SL_HIT
+
+        return ExitReason.INITIAL_SL_HIT

@@ -2,9 +2,10 @@
 
 import logging
 from core.TradeFriendDecisionRunner import TradeFriendDecisionRunner
+from core.TradeFriendSwingTradeMonitor import TradeFriendSwingTradeMonitor
 from core.watchlist_engine import WatchlistEngine
 
-from core.TradeFriendSwingMonitor import TradeFriendSwingTradeMonitor
+
 from core.TradeFriendSwingTriggerEngine import TradeFriendSwingTriggerEngine
 from db.TradeFriendSettingsRepo import TradeFriendSettingsRepo
 from reports.entry_execution.TradeFriendEntryExecutionReportService import TradeFriendEntryExecutionReportService

@@ -71,27 +71,41 @@ class TradeFriendTradeRepo:
     # -------------------------------------------------
     # CREATE TRADE (LOCK CAPITAL)
     # -------------------------------------------------
+    # -------------------------------------------------
+    # CREATE TRADE (LOCK CAPITAL)
+    # -------------------------------------------------
     def save_trade(self, trade: dict) -> int:
         position_value = trade["entry"] * trade["qty"]
         risk_amount = abs(trade["entry"] - trade["sl"]) * trade["qty"]
-
-        # 🔒 lock capital first
+    
+        # 🔒 Lock capital first
         self.settings_repo.adjust_available_swing_capital(-position_value)
-
+    
         try:
             self.cursor.execute("""
                 INSERT INTO tradefriend_trades (
                     swing_plan_id,
-                    symbol, side,
+                    symbol,
+                    side,
                     planned_entry,
-                    entry, sl, trailing_sl, target,
-                    qty, initial_qty, remaining_qty,
-                    position_value, risk_amount,
-                    confidence, status,
-                    hold_mode, entry_day,
+                    entry,
+                    sl,
+                    trailing_sl,
+                    target,
+                    qty,
+                    initial_qty,
+                    remaining_qty,
+                    position_value,
+                    risk_amount,
+                    confidence,
+                    status,
+                    hold_mode,
+                    entry_day,
                     created_on
                 )
-                VALUES (?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
             """, (
                 trade["swing_plan_id"],
                 trade["symbol"],
@@ -99,26 +113,27 @@ class TradeFriendTradeRepo:
                 trade["planned_entry"],
                 trade["entry"],
                 trade["sl"],
-                trade["sl"],
+                trade["sl"],                     # trailing_sl
                 trade["target"],
-
+    
                 trade["qty"],
-                trade["qty"],
-                trade["qty"],
-
+                trade["qty"],                    # initial_qty
+                trade["qty"],                    # remaining_qty
+    
                 position_value,
                 risk_amount,
                 trade.get("confidence", 0),
-                 trade.get("status", "READY"),
+                trade.get("status", "READY"),
+                trade.get("hold_mode", 0),       # ✅ FIXED (was missing)
                 date.today().isoformat(),
                 datetime.now().isoformat()
             ))
-
+    
             self.conn.commit()
             return self.cursor.lastrowid
-
+    
         except Exception:
-            # rollback capital if insert fails
+            # 🔁 rollback locked capital if insert fails
             self.settings_repo.adjust_available_swing_capital(+position_value)
             raise
 
@@ -151,6 +166,17 @@ class TradeFriendTradeRepo:
         """, (symbol,)).fetchone()
         return row is not None
 
+    def promote_if_ready(self, trade_id: int, from_status: str, to_status: str) -> bool:
+       self.cursor.execute("""
+           UPDATE tradefriend_trades
+           SET status = ?
+           WHERE id = ?
+           AND status = ?
+       """, (to_status, trade_id, from_status))
+
+       self.conn.commit()
+
+       return self.cursor.rowcount == 1
     # -------------------------------------------------
     # SL / TRAILING SL
     # -------------------------------------------------
@@ -164,48 +190,91 @@ class TradeFriendTradeRepo:
         """, (new_sl, new_sl, trade_id))
         self.conn.commit()
 
-    # -------------------------------------------------
-    # PARTIAL EXIT (ONLY METHOD)
-    # -------------------------------------------------
+   # ==================================================
+    # PARTIAL EXIT
+    # ==================================================
     def mark_partial_exit(
         self,
         trade_id: int,
         exit_qty: int,
-        exit_price: float
+        exit_price: float,
+        reason: str = "Partial Exit"
     ) -> int | None:
+
         trade = self.fetch_by_id(trade_id)
         if not trade:
+            logger.warning(f"Partial exit failed | trade_id={trade_id} not found")
             return None
 
-        remaining = trade["remaining_qty"]
-        if exit_qty <= 0 or exit_qty >= remaining:
+        remaining_qty = int(trade["remaining_qty"])
+        if exit_qty <= 0 or remaining_qty <= 0:
+            logger.warning(
+                f"Partial exit skipped | trade_id={trade_id} | "
+                f"exit_qty={exit_qty} | remaining_qty={remaining_qty}"
+            )
             return None
 
-        new_remaining = remaining - exit_qty
+        exit_qty = min(exit_qty, remaining_qty)
+        entry_price = float(trade["entry"])
+        new_remaining = remaining_qty - exit_qty
 
-        # 🔓 release proportional capital
-        per_qty_value = trade["position_value"] / remaining
-        released = per_qty_value * exit_qty
+        # --------------------------
+        # 1️⃣ Release Capital
+        # --------------------------
+        released_capital = round(entry_price * exit_qty, 2)
+        self.settings_repo.adjust_available_swing_capital(released_capital)
 
-        self.settings_repo.adjust_available_swing_capital(released)
+        # --------------------------
+        # 2️⃣ Realized PnL (optional audit)
+        # --------------------------
+        realized_pnl = round((exit_price - entry_price) * exit_qty, 2)
+
+        # --------------------------
+        # 3️⃣ Update trade table
+        # --------------------------
+        new_position_value = round(entry_price * new_remaining, 2)
+        status = "PARTIAL" if new_remaining > 0 else "CLOSED"
 
         self.cursor.execute("""
             UPDATE tradefriend_trades
-            SET
-                remaining_qty = ?,
-                position_value = position_value - ?,
-                status = 'PARTIAL',
+            SET remaining_qty = ?,
+                position_value = ?,
+                status = ?,
                 hold_mode = 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (new_remaining, released, trade_id))
-
+        """, (
+            new_remaining,
+            new_position_value,
+            status,
+            trade_id
+        ))
         self.conn.commit()
+
+        # --------------------------
+        # 4️⃣ Archive partial exit for audit
+        # --------------------------
+        self.history_repo.archive_trade(
+            trade=trade,
+            exit_price=exit_price,
+            exit_qty=exit_qty,
+            exit_reason=reason,
+            closed_on=datetime.now().isoformat(),
+            partial=True
+        )
+
+        logger.info(
+            f"➗ PARTIAL EXIT | trade_id={trade_id} | "
+            f"qty={exit_qty} | exit_price={exit_price} | "
+            f"remaining_qty={new_remaining} | released_capital={released_capital} | "
+            f"realized_pnl={realized_pnl}"
+        )
+
         return new_remaining
 
-    # -------------------------------------------------
-    # FINAL EXIT → HISTORY
-    # -------------------------------------------------
+    # ==================================================
+    # FULL EXIT → HISTORY
+    # ==================================================
     def close_and_archive(
         self,
         trade_id: int,
@@ -214,26 +283,46 @@ class TradeFriendTradeRepo:
     ):
         trade = self.fetch_by_id(trade_id)
         if not trade:
+            logger.warning(f"Close and archive failed | trade_id={trade_id} not found")
             return
 
-        # 🔓 release remaining capital
-        self.settings_repo.adjust_available_swing_capital(
-            trade["position_value"]
-        )
+        filled_qty = trade["initial_qty"] - trade["remaining_qty"]
+        if filled_qty <= 0:
+            logger.warning(f"No capital to release for trade_id={trade_id}")
+            return
 
+        # --------------------------
+        # 1️⃣ Release remaining capital
+        # --------------------------
+        released_capital = round(trade["position_value"], 2)
+        self.settings_repo.adjust_available_swing_capital(released_capital)
+
+        # --------------------------
+        # 2️⃣ Archive full trade
+        # --------------------------
         self.history_repo.archive_trade(
             trade=trade,
             exit_price=exit_price,
             exit_reason=exit_reason,
-            closed_on=datetime.now().isoformat()
+            closed_on=datetime.now().isoformat(),
+            partial=False
         )
 
+        # --------------------------
+        # 3️⃣ Remove trade from active table
+        # --------------------------
         self.cursor.execute(
             "DELETE FROM tradefriend_trades WHERE id = ?",
             (trade_id,)
         )
         self.conn.commit()
 
+        logger.info(
+            f"✅ FULL EXIT | trade_id={trade_id} | "
+            f"qty={filled_qty} | exit_price={exit_price} | "
+            f"released_capital={released_capital} | reason={exit_reason}"
+        )
+        
     # -------------------------------------------------
     # SYMBOL HELPERS
     # -------------------------------------------------
@@ -280,7 +369,15 @@ class TradeFriendTradeRepo:
 
         return rows
 
-    
+    def fetch_ready_by_symbol(self, symbol: str):
+        return self.cursor.execute("""
+            SELECT *
+            FROM tradefriend_trades
+            WHERE symbol = ?
+            AND status = 'READY'
+            LIMIT 1
+        """, (symbol,)).fetchone()
+
     def fetch_ready_trades(self): return self.cursor.execute(""" SELECT * FROM tradefriend_trades WHERE status = 'READY' """).fetchall()
 
     # ----------------------------------------------
@@ -381,6 +478,35 @@ class TradeFriendTradeRepo:
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """, (fill_price, remaining, trade_id))
+        self.conn.commit()
+
+
+    def update_ready_trade(self, trade_id: int, trade: dict):
+        self.cursor.execute("""
+            UPDATE tradefriend_trades
+            SET
+                entry = ?,
+                planned_entry = ?,
+                sl = ?,
+                target = ?,
+                qty = ?,
+                initial_qty = ?,
+                remaining_qty = ?,
+                confidence = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            AND status = 'READY'
+        """, (
+            trade["entry"],
+            trade["planned_entry"],
+            trade["sl"],
+            trade["target"],
+            trade["qty"],
+            trade["qty"],
+            trade["qty"],
+            trade.get("confidence", 0),
+            trade_id
+        ))
         self.conn.commit()
 
     # -------------------------------------------------

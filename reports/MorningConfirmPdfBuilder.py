@@ -11,7 +11,7 @@ class MorningConfirmPdfBuilder:
             return ""
 
 
-        output_path = f"reports/morning_confirm_{filename_suffix}.pdf"
+        output_path = f"reports/morning_confirm/morning_confirm_{filename_suffix}.pdf"
         pdf = TradeFriendPdfBase(output_path)
 
         pdf.add_title(title)

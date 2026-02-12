@@ -11,8 +11,9 @@ from config.settings import LOG_DIR
 # ---------------------------------------------------------------------
 os.makedirs(LOG_DIR, exist_ok=True)
 
-LOG_FILE = os.path.join(LOG_DIR, "Decisionapp.log")
+LOG_FILE = os.path.join(LOG_DIR, "app.log")
 ORDER_LOG_FILE = os.path.join(LOG_DIR, "orders.log")
+MONITOR_LOG_FILE = os.path.join(LOG_DIR, "monitor.log")
 
 # ---------------------------------------------------------------------
 # Safe text sanitizer
@@ -51,8 +52,9 @@ def get_logger(name=__name__):
             LOG_FILE,
             when="midnight",
             interval=1,
-            backupCount=14,          # keep last 14 days
-            encoding="utf-8"
+            backupCount=30,          # keep last 14 days
+            encoding="utf-8",
+            delay=True   # 🔑 IMPORTANT for Windows
         )
         fh.suffix = "%Y-%m-%d"
         fh.setLevel(logging.INFO)
@@ -150,3 +152,56 @@ def get_order_logger():
         )
 
     return order_logger
+
+# ---------------------------------------------------------------------
+# Monitor logger (ORDERS LOG – FILE ONLY)
+# ---------------------------------------------------------------------
+def get_monitor_logger():
+    """
+    Dedicated UTF-8 safe logger for Swing Monitor:
+    - Daily rotating file logs
+    - File only (no console)
+    - No threading / locks
+    """
+    monitor_logger = logging.getLogger("monitor")
+    monitor_logger.setLevel(logging.INFO)
+
+    if not monitor_logger.handlers:
+
+        fh = TimedRotatingFileHandler(
+            MONITOR_LOG_FILE,
+            when="midnight",
+            interval=1,
+            backupCount=30,
+            encoding="utf-8",
+            delay=True
+        )
+        fh.suffix = "%Y-%m-%d"
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s"
+        ))
+
+        # Reuse sanitizer
+        _info = monitor_logger.info
+        _warning = monitor_logger.warning
+        _error = monitor_logger.error
+        _exception = monitor_logger.exception
+
+        monitor_logger.info = lambda msg, *a, **kw: _info(
+            sanitize_for_log(str(msg)), *a, **kw
+        )
+        monitor_logger.warning = lambda msg, *a, **kw: _warning(
+            sanitize_for_log(str(msg)), *a, **kw
+        )
+        monitor_logger.error = lambda msg, *a, **kw: _error(
+            sanitize_for_log(str(msg)), *a, **kw
+        )
+        monitor_logger.exception = lambda msg, *a, **kw: _exception(
+            sanitize_for_log(str(msg)), *a, **kw
+        )
+
+        monitor_logger.addHandler(fh)
+        monitor_logger.propagate = False
+
+    return monitor_logger

@@ -121,7 +121,7 @@ class TradeFriendSwingPlanRepo:
             SELECT *
             FROM swing_trade_plans
             WHERE status IN ('PLANNED', 'HOLD')
-            ORDER BY created_on ASC
+            ORDER BY entry ASC, created_on ASC
         """).fetchall()
 
     # --------------------------------------------------

@@ -452,3 +452,36 @@ class WatchlistEngine:
             logger.debug(f"{symbol} → RSI computed for scan context")
 
         return df
+
+    # ==================================================
+    # Delete report files
+    # ==================================================
+
+    
+    def delete_old_report_files(base_path="reports", days=3):
+        """
+        Deletes .pdf and .csv files older than given days from base_path recursively
+        """
+        now = time.time()
+        cutoff_seconds = days * 24 * 60 * 60
+        deleted = 0
+    
+        for root, _, files in os.walk(base_path):
+            for file in files:
+                if file.lower().endswith((".pdf", ".csv")):
+                    file_path = os.path.join(root, file)
+                    try:
+                        file_age = now - os.path.getmtime(file_path)
+    
+                        if file_age > cutoff_seconds:
+                            os.remove(file_path)
+                            deleted += 1
+                            logger.info(f"🗑️ Deleted old report ({days}d+): {file_path}")
+    
+                    except Exception:
+                        logger.exception(f"❌ Failed to delete {file_path}")
+    
+        logger.info(
+            f"🧹 Report cleanup completed | days>{days} | files_deleted={deleted}"
+        )
+
